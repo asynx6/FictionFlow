@@ -166,7 +166,7 @@ export function renderSystemPrompt(story) {
     `   memasukkan AI character ${aiName} atau user ${userName} sebagai`,
     '   speaker. Jika AI Character Gender = female, semua dialogue yang',
     '   diatribusikan ke AI WAJIB gender "female" dan voice_name',
-    '   "<locale>-GadisNeural". Jika User Gender = female dan ${userName}',
+    `   "<locale>-GadisNeural". Jika User Gender = female dan ${userName}`,
     '   bicara, juga "female" + GadisNeural. Untuk karakter fiksi lain di',
     '   luar AI/User, pakai konteks cerita untuk menentukan.',
     '6. Each dialogue line of a character should become ONE audio_segment',
