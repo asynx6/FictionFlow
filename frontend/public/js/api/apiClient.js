@@ -126,4 +126,31 @@ export const apiClient = {
     }),
 
   listModels: () => request('/models'),
+
+  /**
+   * POST /api/tts → audio/mpeg MP3 Blob.
+   * Backend pakai @lixen/edge-tts (Microsoft Edge TTS endpoint, tanpa API key).
+   * Body: { text, voice?, gender? }
+   * @param {{ text: string, voice?: string, gender?: 'male'|'female', signal?: AbortSignal }} opts
+   * @returns {Promise<Blob>}
+   */
+  synthesizeTts: async ({ text, voice, gender, signal }) => {
+    const res = await fetch(`${BASE}/tts`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text, voice, gender }),
+      signal,
+    });
+    if (!res.ok) {
+      let errMsg = `HTTP ${res.status}`;
+      try {
+        const body = await res.json();
+        if (body?.message) errMsg = body.message;
+      } catch { /* ignore */ }
+      const err = new Error(errMsg);
+      err.status = res.status;
+      throw err;
+    }
+    return res.blob();
+  },
 };
