@@ -1,0 +1,10 @@
+[
+  { "id": "openrouter/auto", "label": "OpenRouter Auto (recommended)", "provider": "openrouter" },
+  { "id": "anthropic/claude-3.5-sonnet", "label": "Claude 3.5 Sonnet", "provider": "openrouter" },
+  { "id": "anthropic/claude-3-haiku", "label": "Claude 3 Haiku", "provider": "openrouter" },
+  { "id": "openai/gpt-4o-mini", "label": "GPT-4o mini", "provider": "openrouter" },
+  { "id": "openai/gpt-4o", "label": "GPT-4o", "provider": "openrouter" },
+  { "id": "google/gemini-2.0-flash-exp:free", "label": "Gemini 2.0 Flash (free)", "provider": "openrouter" },
+  { "id": "meta-llama/llama-3.1-70b-instruct", "label": "Llama 3.1 70B Instruct", "provider": "openrouter" },
+  { "id": "mistralai/mistral-large-latest", "label": "Mistral Large", "provider": "openrouter" }
+]

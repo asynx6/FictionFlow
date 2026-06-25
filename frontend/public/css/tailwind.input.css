@@ -1,0 +1,99 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --theme-bg: 9 9 11;       /* zinc-950 #09090b */
+    --theme-text: 250 250 250; /* zinc-50 #fafafa */
+    --theme-muted: 161 161 170;/* zinc-400 #a1a1aa */
+    --theme-accent: 14 165 233;/* sky-500 #0ea5e9 */
+    --theme-hover: 24 24 27;   /* zinc-900 #18181b */
+    --theme-border: 39 39 42;  /* zinc-800 #27272a */
+  }
+
+  :root[data-theme="light"] {
+    color-scheme: light;
+    --theme-bg: 255 255 255;   /* white */
+    --theme-text: 9 9 11;      /* zinc-950 #09090b */
+    --theme-muted: 82 82 91;   /* zinc-600 #52525b */
+    --theme-accent: 2 132 199; /* sky-600 #0284c7 */
+    --theme-hover: 244 244 245;/* zinc-100 #f4f4f5 */
+    --theme-border: 228 228 231;/* zinc-200 #e4e4e7 */
+  }
+
+  :root[data-theme="child"] {
+    color-scheme: light;
+    --theme-bg: 254 252 232;   /* yellow-50 #fefce8 */
+    --theme-text: 69 26 3;     /* amber-900 #451a03 */
+    --theme-muted: 146 64 14;  /* amber-700 #92400e */
+    --theme-accent: 217 119 6; /* amber-600 #d97706 */
+    --theme-hover: 254 240 138;/* yellow-200 #fef08a */
+    --theme-border: 253 224 71;/* yellow-300 #fde047 */
+  }
+
+  body {
+    background-color: rgb(var(--theme-bg));
+    color: rgb(var(--theme-text));
+  }
+}
+
+@layer components {
+  .surface-panel {
+    @apply bg-theme-bg shadow-sm transition-all duration-300 border border-theme-border rounded-2xl;
+  }
+  .glass-panel {
+    @apply bg-theme-bg/80 backdrop-blur-xl transition-all duration-300 border-b border-theme-border;
+  }
+  .input-field {
+    @apply w-full bg-theme-hover/50 border border-theme-border/50 rounded-xl px-4 py-3 text-sm text-theme-text placeholder-theme-muted focus:outline-none focus:ring-2 focus:ring-theme-accent/30 focus:border-theme-accent focus:bg-theme-bg transition-all duration-200;
+  }
+  .btn-primary {
+    @apply inline-flex items-center justify-center bg-theme-accent text-white font-semibold rounded-xl px-5 py-3 hover:scale-[1.02] active:scale-[0.98] transition-transform shadow-md shadow-theme-accent/20;
+  }
+}
+
+@layer utilities {
+  .scrollbar-thin::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  .scrollbar-thin::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .scrollbar-thin::-webkit-scrollbar-thumb {
+    @apply bg-theme-border rounded-full;
+  }
+  .scrollbar-thin::-webkit-scrollbar-thumb:hover {
+    @apply bg-theme-muted;
+  }
+  
+  /* Markdown Styles for Chat */
+  .markdown-content p {
+    @apply mb-3 leading-relaxed;
+  }
+  .markdown-content p:last-child {
+    @apply mb-0;
+  }
+  .markdown-content strong {
+    @apply font-bold;
+  }
+  .markdown-content em {
+    @apply italic text-theme-muted;
+  }
+  .markdown-content * {
+    color: inherit;
+  }
+}
+
+/* Ensure chat bubbles shrink to text width while keeping paragraphs block-level for multi-line messages */
+.msg-content p {
+  display: block;
+  width: fit-content;
+  max-width: 100%;
+  margin: 0 0 0.75em 0;
+}
+.msg-content p:last-child {
+  margin-bottom: 0;
+}

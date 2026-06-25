@@ -1,0 +1,14 @@
+{
+  "name": "fictionflow-frontend",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Static frontend assets (vanilla JS, ES modules)",
+  "scripts": {
+    "build:css": "tailwindcss -i ./public/css/tailwind.input.css -o ./public/css/tailwind.output.css --minify",
+    "watch:css": "tailwindcss -i ./public/css/tailwind.input.css -o ./public/css/tailwind.output.css --watch"
+  },
+  "devDependencies": {
+    "tailwindcss": "^3.4.13"
+  }
+}

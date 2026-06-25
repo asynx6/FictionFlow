@@ -1,0 +1,17 @@
+/* Chat bubble fixes — loaded outside Tailwind so it cannot be purged */
+
+.msg-content {
+  width: fit-content;
+  max-width: 100%;
+}
+
+/* Ensure chat bubbles shrink to text width while keeping paragraphs block-level for multi-line messages */
+.msg-content p {
+  display: block;
+  width: fit-content;
+  max-width: 100%;
+  margin: 0 0 0.75em 0;
+}
+.msg-content p:last-child {
+  margin-bottom: 0;
+}

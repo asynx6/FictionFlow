@@ -1,0 +1,18 @@
+{
+  "name": "fictionflow",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Interactive AI roleplay novel platform with multi-voice TTS",
+  "scripts": {
+    "install:all": "npm install --prefix backend && npm install --prefix frontend",
+    "dev:backend": "npm run dev --prefix backend",
+    "dev:frontend:css": "npm run build:css --prefix frontend",
+    "dev:frontend:watch": "npm run watch:css --prefix frontend",
+    "start": "npm run start --prefix backend",
+    "build:css": "npm run build:css --prefix frontend"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

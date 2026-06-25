@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="id" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>FictionFlow — Dashboard</title>
+  <link rel="stylesheet" href="/css/tailwind.output.css" />
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/icon?family=Material+Icons+Round" rel="stylesheet">
+</head>
+<body class="theme-bg theme-text min-h-screen flex flex-col font-sans transition-colors duration-300 antialiased overflow-y-scroll">
+
+  <!-- Navbar -->
+  <header class="sticky top-0 z-40 border-b border-theme-border/50 glass-panel shadow-sm transition-colors duration-300">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+      <div class="flex items-center gap-2">
+        <div class="w-8 h-8 rounded-lg bg-gradient-to-br from-theme-accent to-theme-accent/70 text-white flex items-center justify-center shadow-md">
+          <span class="material-icons-round text-xl">auto_stories</span>
+        </div>
+        <h1 class="text-xl font-bold tracking-tight">FictionFlow</h1>
+      </div>
+      <button id="themeToggleBtn" class="p-2 rounded-full hover:bg-theme-hover transition-colors" title="Ubah Tema" aria-label="Ubah Tema">
+        <span class="material-icons-round text-theme-muted" id="themeIcon">dark_mode</span>
+      </button>
+    </div>
+  </header>
+
+  <!-- Main Content -->
+  <main class="flex-grow max-w-7xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-8 sm:py-12">
+
+    <div class="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-12">
+
+      <!-- Left Column: Create New -->
+      <section class="lg:col-span-5 space-y-6">
+        <div class="space-y-2">
+          <h2 class="text-2xl sm:text-3xl font-bold tracking-tight">Mulai Petualangan Baru</h2>
+          <p class="text-theme-muted">Tentukan karakter AI-mu dan mulailah roleplay.</p>
+        </div>
+
+        <form id="createStoryForm" class="surface-panel rounded-2xl p-6 shadow-sm border border-theme-border/50 space-y-6 transition-all">
+          <div id="errorBanner" class="hidden rounded-xl bg-red-500/10 border border-red-500/20 p-4 text-red-500 text-sm font-medium"></div>
+
+          <!-- AI Prompt Generator -->
+          <div class="space-y-2">
+            <label for="aiPromptGenerator" class="block text-sm font-semibold">Prompt AI Generator</label>
+            <div class="flex gap-2">
+              <input type="text" id="aiPromptGenerator" name="aiPromptGenerator" placeholder="Contoh: cewek tsundere kakak kelas di sekolah elite"
+                class="input-field" />
+              <button type="button" id="generateBtn" class="btn-primary px-4 whitespace-nowrap flex items-center gap-2">
+                <span class="material-icons-round text-[18px]">auto_fix_high</span>
+                <span>Generate</span>
+              </button>
+            </div>
+            <p class="text-xs text-theme-muted">AI akan mengisi nama, gender, sifat, dan target otomatis dari prompt ini.</p>
+          </div>
+
+          <hr class="border-theme-border/50" />
+
+          <!-- User Info -->
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div class="space-y-2">
+              <label for="userName" class="block text-sm font-semibold">Nama Kamu</label>
+              <input type="text" id="userName" name="userName" required placeholder="Contoh: Beni"
+                class="input-field" />
+            </div>
+            <div class="space-y-2">
+              <label for="userGender" class="block text-sm font-semibold">Gender Kamu</label>
+              <select id="userGender" name="userGender" required class="input-field appearance-none bg-no-repeat bg-[right_1rem_center] bg-[length:1em_1em]" style="background-image: url('data:image/svg+xml;charset=US-ASCII,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2224%22%20height%3D%2224%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22currentColor%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpolyline%20points%3D%226%209%2012%2015%2018%209%22%3E%3C%2Fpolyline%3E%3C%2Fsvg%3E');">
+                <option value="male">Laki-laki</option>
+                <option value="female">Perempuan</option>
+                <option value="neutral">Netral</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="space-y-2">
+            <label for="userPersona" class="block text-sm font-semibold">Deskripsi Kamu (Opsional)</label>
+            <textarea id="userPersona" name="userPersona" rows="2" placeholder="Contoh: Beni adalah orang yang kaya tapi baik, suka menolong, dan tinggal di Bandung."
+              class="input-field resize-none"></textarea>
+            <p class="text-xs text-theme-muted">AI akan membaca deskripsi ini untuk memahami peran, sifat, dan latar kamu.</p>
+          </div>
+
+          <hr class="border-theme-border/50" />
+
+          <!-- AI Info -->
+          <div class="space-y-4">
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div class="space-y-2">
+                <label for="aiName" class="block text-sm font-semibold">Nama AI</label>
+                <input type="text" id="aiName" name="aiName" required placeholder="Contoh: Mika"
+                  class="input-field" />
+              </div>
+              <div class="space-y-2">
+                <label for="aiGender" class="block text-sm font-semibold">Gender AI</label>
+                <select id="aiGender" name="aiGender" required class="input-field appearance-none bg-no-repeat bg-[right_1rem_center] bg-[length:1em_1em]" style="background-image: url('data:image/svg+xml;charset=US-ASCII,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2224%22%20height%3D%2224%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22currentColor%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpolyline%20points%3D%226%209%2012%2015%2018%209%22%3E%3C%2Fpolyline%3E%3C%2Fsvg%3E');">
+                  <option value="female">Perempuan</option>
+                  <option value="male">Laki-laki</option>
+                  <option value="neutral">Netral</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="space-y-2">
+              <label for="aiPersonality" class="block text-sm font-semibold">Sifat AI (Personality)</label>
+              <input type="text" id="aiPersonality" name="aiPersonality" required placeholder="Contoh: Tsundere, baik hati, pintar"
+                class="input-field" />
+            </div>
+
+            <div class="space-y-2">
+              <label for="languageStyle" class="block text-sm font-semibold">Gaya Bahasa</label>
+              <select id="languageStyle" name="languageStyle" required class="input-field appearance-none bg-no-repeat bg-[right_1rem_center] bg-[length:1em_1em]" style="background-image: url('data:image/svg+xml;charset=US-ASCII,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2224%22%20height%3D%2224%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22currentColor%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpolyline%20points%3D%226%209%2012%2015%2018%209%22%3E%3C%2Fpolyline%3E%3C%2Fsvg%3E');">
+                <option value="santai">Santai & Asik</option>
+                <option value="ceplas_ceplos">Blak-blakan & To the point</option>
+                <option value="absurd">Kocak & Absurd</option>
+                <option value="kasar_imut">Kasar tapi Imut (Tsundere)</option>
+                <option value="profesional">Profesional & Sopan</option>
+                <option value="custom">Kustom (Tulis Sendiri)</option>
+              </select>
+            </div>
+
+            <div class="space-y-2 hidden" id="customLanguageStyleWrapper">
+              <label for="customLanguageStyle" class="block text-sm font-semibold">Tulis Gaya Bahasa Custom</label>
+              <input type="text" id="customLanguageStyle" name="customLanguageStyle" placeholder="Contoh: Bicara seperti anak alay, atau seperti kakek tua..." class="input-field" />
+            </div>
+
+            <div class="space-y-2">
+              <label for="targetEnding" class="block text-sm font-semibold">Target Cerita (Opsional)</label>
+              <input type="text" id="targetEnding" name="targetEnding" placeholder="Contoh: Jadi pacar, jadi musuh, berpetualang"
+                class="input-field" />
+            </div>
+          </div>
+
+          <button type="submit" id="createBtn" class="btn-primary w-full group relative overflow-hidden">
+            <span class="relative z-10 flex items-center justify-center gap-2">
+              <span class="material-icons-round text-[20px]">add_circle</span>
+              <span>Buat Session Roleplay</span>
+            </span>
+          </button>
+        </form>
+      </section>
+
+      <!-- Right Column: Session List -->
+      <section class="lg:col-span-7 space-y-6">
+        <div class="flex items-center justify-between">
+          <h2 class="text-xl sm:text-2xl font-bold tracking-tight">Sesi Berlangsung</h2>
+          <span class="px-3 py-1 text-xs font-medium bg-theme-accent/10 text-theme-accent rounded-full border border-theme-accent/20 shadow-sm" id="sessionCount">0 Sesi</span>
+        </div>
+
+        <!-- Skeleton Loading -->
+        <div id="storiesSkeleton" class="space-y-4 hidden">
+          <div class="surface-panel rounded-2xl p-5 border border-theme-border/50 animate-pulse flex flex-col sm:flex-row gap-4">
+             <div class="h-12 w-12 rounded-full bg-theme-hover"></div>
+             <div class="flex-1 space-y-3">
+               <div class="h-4 bg-theme-hover rounded w-1/3"></div>
+               <div class="h-3 bg-theme-hover rounded w-2/3"></div>
+             </div>
+          </div>
+          <div class="surface-panel rounded-2xl p-5 border border-theme-border/50 animate-pulse flex flex-col sm:flex-row gap-4">
+            <div class="h-12 w-12 rounded-full bg-theme-hover"></div>
+            <div class="flex-1 space-y-3">
+              <div class="h-4 bg-theme-hover rounded w-1/4"></div>
+              <div class="h-3 bg-theme-hover rounded w-1/2"></div>
+            </div>
+         </div>
+        </div>
+
+        <!-- Empty State -->
+        <div id="emptyState" class="hidden surface-panel rounded-3xl p-10 sm:p-16 text-center border border-theme-border/50 border-dashed">
+          <div class="w-16 h-16 mx-auto rounded-full bg-theme-hover flex items-center justify-center mb-4">
+            <span class="material-icons-round text-3xl text-theme-muted">inbox</span>
+          </div>
+          <h3 class="text-lg font-bold mb-2">Belum ada sesi roleplay</h3>
+          <p class="text-theme-muted text-sm max-w-sm mx-auto">Buat karakter di sebelah kiri untuk mulai chatting dengan AI.</p>
+        </div>
+
+        <!-- Stories List -->
+        <div id="storiesList" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-1 gap-4 lg:max-h-[700px] lg:overflow-y-auto lg:pr-2 scrollbar-thin scrollbar-thumb-theme-hover scrollbar-track-transparent">
+          <!-- Injected via JS -->
+        </div>
+      </section>
+
+    </div>
+  </main>
+
+  <!-- Custom Delete Confirmation Modal -->
+  <div id="deleteModal" class="fixed inset-0 z-[70] hidden flex items-center justify-center p-4">
+    <div class="absolute inset-0 bg-black/60 backdrop-blur-sm transition-opacity" id="deleteBackdrop"></div>
+    <div class="relative bg-theme-bg rounded-2xl border border-theme-border/50 shadow-2xl w-full max-w-md p-6 scale-95 opacity-0 transition-all duration-200" id="deleteDialog">
+      <div class="w-12 h-12 rounded-full bg-red-500/10 flex items-center justify-center mb-4">
+        <span class="material-icons-round text-red-500 text-2xl">delete_forever</span>
+      </div>
+      <h3 class="text-lg font-bold mb-2">Hapus Sesi?</h3>
+      <p class="text-sm text-theme-muted mb-6">Semua chat dan memori di sesi <strong id="deleteTargetName" class="text-theme-text"></strong> akan dihapus permanen. Tindakan ini tidak bisa dibatalkan.</p>
+      <div class="flex gap-3 justify-end">
+        <button id="cancelDeleteBtn" class="px-4 py-2 rounded-xl text-sm font-semibold text-theme-muted hover:bg-theme-hover transition-colors">Batal</button>
+        <button id="confirmDeleteBtn" class="px-4 py-2 rounded-xl text-sm font-semibold bg-red-500 text-white hover:bg-red-600 transition-colors">Hapus Permanen</button>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="/js/pages/dashboard.page.js"></script>
+</body>
+</html>

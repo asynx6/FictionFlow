@@ -1,0 +1,17 @@
+node_modules/
+data/*.sqlite
+data/*.sqlite-journal
+data/*.sqlite-shm
+data/*.sqlite-wal
+.env
+.DS_Store
+*.log
+frontend/css/tailwind.output.css
+dist/
+build/
+.vscode/
+.idea/
+coverage/
+
+GEMINI.md
+skills/
