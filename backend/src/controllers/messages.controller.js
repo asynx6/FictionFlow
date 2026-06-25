@@ -8,6 +8,23 @@ import {
 import { extractAndMergeFacts } from '../services/memoryExtractor.service.js';
 import { HttpError } from '../middlewares/errorHandler.js';
 
+/**
+ * Resolve gender untuk sebuah segment audio.
+ * Aturan:
+ *   - Normalisasi (lowercase trim) rawGender dan aiGender.
+ *   - Kalau rawGender ada di whitelist ['male','female'] → pakai itu.
+ *   - Kalau tidak, fallback ke aiGender (kalau masuk whitelist).
+ *   - Else default 'male' (preserves legacy fallback).
+ */
+function resolveSegmentGender(rawGender, aiGender) {
+  const normalize = (v) => (typeof v === 'string' ? v.toLowerCase().trim() : '');
+  const raw = normalize(rawGender);
+  if (raw === 'male' || raw === 'female') return raw;
+  const ai = normalize(aiGender);
+  if (ai === 'male' || ai === 'female') return ai;
+  return 'male';
+}
+
 const insertMessageStmt = db.prepare(`
   INSERT INTO messages (story_id, role, raw_content, token_estimate)
   VALUES (?, ?, ?, ?)
@@ -38,16 +55,16 @@ function buildLocalFallbackResponse(story, userContent, errorMessage) {
   const narration = `⚠️ AI provider sedang tidak tersedia. ${aiName} memberikan balasan sementara agar percakapan tetap berjalan.\n\nHai ${userName}! ${aiName} di sini. Maaf ya kalau balasannya terbatas hari ini. Ada yang bisa ${aiName} bantu?${errorInfo}`;
   return {
     raw_text: narration,
-    parsed: buildSimpleFallbackSegments(narration, aiName),
+    parsed: buildSimpleFallbackSegments(narration, aiName, story.ai_gender),
     used_fallback: true,
   };
 }
 
 /** Build audio_segments sederhana untuk narasi teks (LLM tidak dipanggil). */
-function buildSimpleFallbackSegments(narration, aiName) {
+function buildSimpleFallbackSegments(narration, aiName, aiGender) {
   const segments = [{
     text: narration,
-    gender: 'male',
+    gender: resolveSegmentGender(null, aiGender),
     type: 'narration',
     voice_config: { locale: 'id-ID', voice_name: 'id-ID-ArdiNeural' },
   }];
@@ -71,7 +88,7 @@ function escapeCodeFences(text) {
     .trim();
 }
 
-function tryParseStoryJson(rawText) {
+function tryParseStoryJson(rawText, aiGender) {
   if (!rawText || typeof rawText !== 'string') return null;
   const cleaned = stripReasoningContent(escapeCodeFences(rawText));
   // Cari kurung kurawal平衡 pertama
@@ -86,7 +103,7 @@ function tryParseStoryJson(rawText) {
     const audio_segments = segmentsIn
       .filter((s) => s && typeof s.text === 'string' && s.text.trim().length > 0)
       .map((s) => {
-        const rawGender = s.gender === 'female' ? 'female' : 'male';
+        const rawGender = resolveSegmentGender(s.gender, aiGender);
         const rawLocale = typeof s.voice_config?.locale === 'string' ? s.voice_config.locale : 'id-ID';
         const isEnglish = rawLocale.toLowerCase().startsWith('en');
         const voice_name = isEnglish
@@ -123,7 +140,7 @@ function tryParseStoryJson(rawText) {
  * (LLM tidak dipanggil, fallback konservatif ke karakter AI kalau ada konteks).
  * Narasi → 'narration' type, gender male.
  */
-function buildFallbackSegmentsFromText(rawText) {
+function buildFallbackSegmentsFromText(rawText, aiGender = 'male') {
   if (!rawText || !rawText.trim()) {
     return { full_story: rawText || '', audio_segments: [] };
   }
@@ -142,7 +159,7 @@ function buildFallbackSegmentsFromText(rawText) {
         const isDialogue = /^"[^"]+"$/.test(part);
         segments.push({
           text: part,
-          gender: isDialogue ? 'female' : 'male',
+          gender: isDialogue ? resolveSegmentGender(null, aiGender) : 'male',
           type: isDialogue ? 'dialogue' : 'narration',
           voice_config: {
             locale: 'id-ID',
@@ -175,8 +192,8 @@ function finalizeResponse(text) {
  * Trigger parse setiap kali ada kurung kurawal tutup di akhir (candidates).
  * Batas parse berulang=1 setiap chunks + 1 final saat stream_done.
  */
-function safeParseFromBuffer(buffer) {
-  return tryParseStoryJson(buffer);
+function safeParseFromBuffer(buffer, aiGender) {
+  return tryParseStoryJson(buffer, aiGender);
 }
 
 /**
@@ -254,7 +271,7 @@ export async function streamChat({
   }
 
   // Parse JSON output → {full_story, audio_segments}. Fallback raw text kalau gagal.
-  const parsed = safeParseFromBuffer(accumulator);
+  const parsed = safeParseFromBuffer(accumulator, story.ai_gender);
   let fullStoryText;
   let audioSegments;
   let usedFallbackParse = false;
@@ -265,7 +282,7 @@ export async function streamChat({
   } else {
     usedFallbackParse = true;
     const legacyText = finalizeResponse(accumulator);
-    const fb = buildFallbackSegmentsFromText(legacyText);
+    const fb = buildFallbackSegmentsFromText(legacyText, story.ai_gender);
     fullStoryText = fb.full_story;
     audioSegments = fb.audio_segments;
   }
