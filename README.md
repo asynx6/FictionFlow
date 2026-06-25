@@ -1,13 +1,13 @@
 # FictionFlow
 
-> Platform interaktif roleplay novel berbasis AI. Single-user, self-hosted, hemat RAM. Hybrid TTS: Microsoft Edge TTS via `@lixen/edge-tts` (narasi + dialog AI) + Web Speech API fallback (browser).
+> Platform interaktif roleplay novel berbasis AI. Single-user, self-hosted, hemat RAM. Hybrid TTS via Microsoft Edge TTS (`@lixen/edge-tts`, 2-pack `id-ID`/`en-US` × male/female = 4 Neural voices) + Web Speech API fallback (browser).
 
 ## ✨ Fitur
 
 - 🎭 **Long-Term Memory** — AI tidak pernah lupa fakta inti cerita (nama, sifat, gaya bahasa, target ending)
 - 🧠 **Short-Term Memory** — Hanya N pertukaran terakhir yang dikirim ke AI, hemat token untuk cerita panjang
 - 🔄 **Two-Tier Memory Engine** — Sesuai spec di `docs/FictionFlow.md` Bab 6
-- 🎙️ **Hybrid Multi-Voice TTS** — Server-synthesize via `@lixen/edge-tts` (id-ID-ArdiNeural / id-ID-GadisNeural) + browser Web Speech fallback. Backend emit `audio_segments[]` JSON, frontend queue manager play/cancel/skip
+- 🎙️ **Hybrid Multi-Voice TTS** — Server-synthesize via `@lixen/edge-tts` (4 Neural voices: `id-ID-ArdiNeural`, `id-ID-GadisNeural`, `en-US-GuyNeural`, `en-US-JennyNeural`) + browser Web Speech fallback. 2 voice pack pilihan user di Story settings. Backend emit `audio_segments[]` JSON, frontend queue manager play/cancel/skip
 - 🛡️ **Crash-safe** — `process.once('uncaughtException')` race-pattern di service + filter di `server.js` agar 403 dari Microsoft endpoint tidak membunuh server
 - 📡 **Streaming Chat (SSE)** — Token demi token, tidak nunggu sampai selesai
 - 🔌 **Pluggable Model Provider** — OpenRouter / 9Router / OpenAI-compatible lain
@@ -162,26 +162,35 @@ Base URL: `http://localhost:3000/api`
 
 ## 🎙️ TTS & Audio
 
-AI membalas dengan struktur hybrid: narasi selalu `id-ID-ArdiNeural`, dialog male = `ArdiNeural`, dialog female = `GadisNeural`. Backend emit SSE dengan field `audio_segments[]`:
+AI membalas dengan struktur hybrid melalui sistem **2 voice pack** (pengaturan user di Story settings):
+
+| Pack | Locale | Narration (male) | Dialogue female |
+|------|--------|------------------|-----------------|
+| Indonesian | `id-ID` | `id-ID-ArdiNeural` | `id-ID-GadisNeural` |
+| English (US) | `en-US` | `en-US-GuyNeural` | `en-US-JennyNeural` |
+
+Pemilihan pack disimpan di `localStorage.fictionflow_voice_pack` (default `id-ID`). Pack user menang atas hint apapun dari LLM. Setiap dialog ditandai dengan gender karakter sehingga backend otomatis pilih voice yang sesuai.
+
+Backend emit SSE dengan field `audio_segments[]`:
 
 ```jsonc
 {
   "message_id": 17,
   "full_content": "Malam itu hujan turun perlahan...",
   "audio_segments": [
-    { "text": "Malam itu hujan turun perlahan...", "gender": "male",  "type": "narration", "voice_config": { "voice": "id-ID-ArdiNeural",  "rate": "+0%", "pitch": "+0Hz" } },
-    { "text": "Kamu kenapa diam dari tadi?",        "gender": "female","type": "dialogue",  "voice_config": { "voice": "id-ID-GadisNeural", "rate": "+0%", "pitch": "+0Hz" } }
+    { "text": "Malam itu hujan turun perlahan...", "gender": "male",  "type": "narration", "voice_config": { "locale": "id-ID", "voice_name": "id-ID-ArdiNeural"  } },
+    { "text": "Kamu kenapa diam dari tadi?",        "gender": "female","type": "dialogue",  "voice_config": { "locale": "id-ID", "voice_name": "id-ID-GadisNeural" } }
   ],
   "used_fallback_parse": false
 }
 ```
 
 Pipeline:
-1. Backend `services/edgeTts.service.js` panggil `@lixen/edge-tts` per-segment → MP3 Blob
-2. Frontend `core/ttsQueueManager.js` fetch via `apiClient.synthesizeTts()` → `<audio>` element, Antrian + skip/abort/8s timeout
-3. Kalau EdgeTTS gagal (403 / network / 500), fallback ke `window.speechSynthesis` per-segment di browser
+1. Backend `services/edgeTts.service.js` panggil `@lixen/edge-tts` per-segment → MP3 Blob. Hint dari LLM dinormalisasi (suffix `-Male`/`-Female` → `Neural`) sebelum dipakai; kalau tidak ada hint, suara dipilih berdasar `gender` + pack aktif dari request.
+2. Frontend `core/ttsQueueManager.js` fetch via `apiClient.synthesizeTts()` → `<audio>` element, Antrian + skip/abort/8s timeout. Voice di-resolve dari pack aktif + segment gender (sumber kebenaran tunggal di `edgeVoiceForPack`).
+3. Kalau EdgeTTS gagal (403 / network / 500 / hint tidak dikenal), fallback ke `window.speechSynthesis` per-segment di browser (lookup prefix-locale pack).
 
-Endpoint server-side `POST /api/tts` tersedia untuk replay/ujian manual (body: `{text, voice?, gender?}` → MP3 Buffer + header `X-Tts-Voice`).
+Endpoint server-side `POST /api/tts` tersedia untuk replay/ujian manual (body: `{text, voice?, gender?}` → MP3 Buffer + header `X-Tts-Voice`). Sekarang menerima `voice` eksplisit (e.g. `id-ID-GadisNeural`) atau derivasi otomatis dari `gender`.
 
 ---
 

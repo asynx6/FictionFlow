@@ -1,10 +1,29 @@
 import { parseTaggedSegments, pickVoiceForPreset, loadBrowserVoices } from './ttsEngine.js';
 
+/**
+ * Voice pack → EdgeTTS voice_name mapping. Sumber kebenaran tunggal.
+ * Pack 'en-US' = US English (GuyNeural male / JennyNeural female).
+ * Pack 'id-ID' = Indonesian (ArdiNeural male / GadisNeural female).
+ * Hint dari LLM diabaikan — LLM kadang output nama yang tidak valid; pack user menang.
+ */
+function edgeVoiceForPack(pack, gender) {
+  const g = (gender ?? '').toString();
+  if (pack === 'en-US') {
+    return g === 'female' ? 'en-US-JennyNeural' : 'en-US-GuyNeural';
+  }
+  return g === 'female' ? 'id-ID-GadisNeural' : 'id-ID-ArdiNeural';
+}
+
+function getActivePack() {
+  try {
+    return (localStorage.getItem('fictionflow_voice_pack') || 'id-ID').toString();
+  } catch {
+    return 'id-ID';
+  }
+}
+
 function resolveTtsVoice(segment) {
-  const hint = segment?.voice_config?.voice_name;
-  if (hint && typeof hint === 'string' && hint.trim()) return hint.trim();
-  if (segment?.gender === 'female') return 'id-ID-GadisNeural';
-  return 'id-ID-ArdiNeural';
+  return edgeVoiceForPack(getActivePack(), segment?.gender);
 }
 
 function clamp(v, min, max) {
@@ -12,9 +31,18 @@ function clamp(v, min, max) {
 }
 
 /**
- * Antrian pemutaran TTS. Kontrol transport sesuai Bab 7.4.
- * Event yang di-emit: 'state', 'segment'.
+ * Dispatch DOM CustomEvent 'tts:playback-finished' setiap kali playback selesai
+ * secara natural (semua segment selesai atau segment terakhir onended).
+ * story.page.js listen event ini untuk reset currentUtterance.
+ * Hanya fire kalau TTS memang sudah selesai, bukan saat user stop manual.
  */
+function dispatchPlaybackFinished() {
+  try {
+    window.dispatchEvent(new CustomEvent('tts:playback-finished'));
+  } catch { /* ignore */ }
+}
+
+
 export class TtsQueueManager {
   constructor() {
     this.segments = [];
@@ -214,6 +242,10 @@ export class TtsQueueManager {
       this._disposeCurrent();
       this.clearHighlight();
       this.index += 1;
+      if (this.index >= this.segments.length) {
+        this._finish();
+        return;
+      }
       if (this.playing) this._speakCurrent();
     };
     audio.onerror = () => {
@@ -238,12 +270,15 @@ export class TtsQueueManager {
       onEnd?.();
       return;
     }
+    const pack = getActivePack();
     const utter = new SpeechSynthesisUtterance(segment.text);
     const voice = (this.voices ?? []).find(
-      (v) => v.lang?.toLowerCase().startsWith((segment?.voice_config?.locale ?? 'id-id').split('-')[0])
+      (v) => (v.lang || '').toLowerCase() === pack.toLowerCase()
+    ) ?? (this.voices ?? []).find(
+      (v) => (v.lang || '').toLowerCase().startsWith(pack.split('-')[0])
     );
     if (voice) utter.voice = voice;
-    utter.lang = segment?.voice_config?.locale ?? 'id-ID';
+    utter.lang = pack;
     utter.onend = () => onEnd?.();
     utter.onerror = () => onEnd?.();
     try {
@@ -356,6 +391,7 @@ export class TtsQueueManager {
     this.index = 0;
     this.clearHighlight();
     this.emit('state', this.snapshot());
+    dispatchPlaybackFinished();
   }
 }
 

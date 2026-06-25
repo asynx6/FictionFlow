@@ -4,9 +4,9 @@
  * Menggunakan @lixen/edge-tts yang berbicara ke Microsoft Edge TTS endpoint
  * (gratis, tidak butuh API key). Voice output fixed MP3 48kbitrate mono.
  *
- * Voice mapping default:
- *   - male / narration → id-ID-ArdiNeural
- *   - female           → id-ID-GadisNeural
+ * Pack names (single source of truth):
+ *   - id-ID : ArdiNeural (male / narration) + GadisNeural (female)
+ *   - en-US : GuyNeural (male / narration)  + JennyNeural (female)
  */
 
 import pkg from '@lixen/edge-tts';
@@ -14,6 +14,27 @@ const { EdgeTTS } = pkg;
 
 export const DEFAULT_VOICE_MALE = 'id-ID-ArdiNeural';
 export const DEFAULT_VOICE_FEMALE = 'id-ID-GadisNeural';
+export const DEFAULT_VOICE_MALE_EN = 'en-US-GuyNeural';
+export const DEFAULT_VOICE_FEMALE_EN = 'en-US-JennyNeural';
+
+export const VALID_PACKS = new Set(['id-ID', 'en-US']);
+
+/**
+ * Strip suffix non-Neural (-Male / -Female / -M / -F) yang kadang muncul di
+ * hint LLM lama agar tidak error di EdgeTTS endpoint. Mis.
+ *   id-ID-Ardi-Male   → id-ID-ArdiNeural
+ *   id-ID-Gadis-Female → id-ID-GadisNeural
+ */
+function normalizeHint(hint) {
+  if (!hint || typeof hint !== 'string') return null;
+  const trimmed = hint.trim();
+  if (!trimmed) return null;
+  return trimmed
+    .replace(/-Male$/i, 'Neural')
+    .replace(/-Female$/i, 'Neural')
+    .replace(/-M$/, 'Neural')
+    .replace(/-F$/i, 'Neural');
+}
 
 function pickVoiceForSegment(segment) {
   if (!segment) return DEFAULT_VOICE_MALE;
@@ -64,10 +85,8 @@ export async function synthesizeSegment(segment) {
   if (!text) {
     throw new Error('Segment text kosong.');
   }
-  const hint = segment?.voice_config?.voice_name;
-  const voice = hint && typeof hint === 'string' && hint.trim()
-    ? hint.trim()
-    : pickVoiceForSegment(segment);
+  const voice = normalizeHint(segment?.voice_config?.voice_name)
+    ?? pickVoiceForSegment(segment);
 
   return runSynthesize(text, voice, {
     pitch: '0Hz',

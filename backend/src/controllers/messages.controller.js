@@ -49,7 +49,7 @@ function buildSimpleFallbackSegments(narration, aiName) {
     text: narration,
     gender: 'male',
     type: 'narration',
-    voice_config: { locale: 'id-ID', voice_name: 'id-ID-Ardi-Male' },
+    voice_config: { locale: 'id-ID', voice_name: 'id-ID-ArdiNeural' },
   }];
   return { full_story: narration, audio_segments: segments };
 }
@@ -85,17 +85,28 @@ function tryParseStoryJson(rawText) {
     const segmentsIn = Array.isArray(obj.audio_segments) ? obj.audio_segments : [];
     const audio_segments = segmentsIn
       .filter((s) => s && typeof s.text === 'string' && s.text.trim().length > 0)
-      .map((s) => ({
-        text: s.text,
-        gender: s.gender === 'female' ? 'female' : 'male',
-        type: s.type === 'dialogue' ? 'dialogue' : 'narration',
-        voice_config: {
-          locale: typeof s.voice_config?.locale === 'string' ? s.voice_config.locale : 'id-ID',
-          voice_name: typeof s.voice_config?.voice_name === 'string'
-            ? s.voice_config.voice_name
-            : 'id-ID-Ardi-Male',
-        },
-      }));
+      .map((s) => {
+        const rawGender = s.gender === 'female' ? 'female' : 'male';
+        const rawLocale = typeof s.voice_config?.locale === 'string' ? s.voice_config.locale : 'id-ID';
+        const isEnglish = rawLocale.toLowerCase().startsWith('en');
+        const voice_name = isEnglish
+          ? (rawGender === 'female' ? 'en-US-JennyNeural' : 'en-US-GuyNeural')
+          : (rawGender === 'female' ? 'id-ID-GadisNeural' : 'id-ID-ArdiNeural');
+        // Normalisasi hint non-Neural dari LLM (-Male / -Female suffix) supaya pass-through valid.
+        let llmHint = (typeof s.voice_config?.voice_name === 'string') ? s.voice_config.voice_name : null;
+        if (llmHint) {
+          llmHint = llmHint.replace(/-Male$/i, 'Neural').replace(/-Female$/i, 'Neural');
+        }
+        return {
+          text: s.text,
+          gender: rawGender,
+          type: s.type === 'dialogue' ? 'dialogue' : 'narration',
+          voice_config: {
+            locale: rawLocale,
+            voice_name: llmHint || voice_name,
+          },
+        };
+      });
     return {
       full_story: obj.full_story.trim(),
       audio_segments,
@@ -108,12 +119,14 @@ function tryParseStoryJson(rawText) {
 /**
  * Build fallback audio_segments dari teks narasi polos (split per kalimat).
  * Dipakai kalau LLM output bukan JSON valid atau stream putus.
+ * Dialog (text dalam tanda kutip ganda) → 'dialogue' type, gender default female
+ * (LLM tidak dipanggil, fallback konservatif ke karakter AI kalau ada konteks).
+ * Narasi → 'narration' type, gender male.
  */
 function buildFallbackSegmentsFromText(rawText) {
   if (!rawText || !rawText.trim()) {
     return { full_story: rawText || '', audio_segments: [] };
   }
-  // Split per double-newline atau sentence end. Sederhana saja.
   const paragraphList = rawText
     .split(/\n{2,}/g)
     .map((p) => p.trim())
@@ -121,15 +134,20 @@ function buildFallbackSegmentsFromText(rawText) {
   const segments = [];
   for (const para of paragraphList) {
     if (!para) continue;
-    // Jika paragraf mengandung dialog (tanda kutip), pecah per dialog.
-    const dialogueSplit = para.split(/(?="[^"]*")/g).map((s) => s.trim()).filter(Boolean);
-    if (dialogueSplit.length > 1) {
-      for (const part of dialogueSplit) {
+    // Paragraph punya dialog (ada tanda kutip ganda)?
+    if (/"[^"]+"/.test(para)) {
+      // Pecah: bagian sebelum/antar/dialog. Bagian dengan kutip → dialogue.
+      const parts = para.split(/(?="[^"]+")/g).map((s) => s.trim()).filter(Boolean);
+      for (const part of parts) {
+        const isDialogue = /^"[^"]+"$/.test(part);
         segments.push({
           text: part,
-          gender: 'male',
-          type: 'narration',
-          voice_config: { locale: 'id-ID', voice_name: 'id-ID-Ardi-Male' },
+          gender: isDialogue ? 'female' : 'male',
+          type: isDialogue ? 'dialogue' : 'narration',
+          voice_config: {
+            locale: 'id-ID',
+            voice_name: isDialogue ? 'id-ID-GadisNeural' : 'id-ID-ArdiNeural',
+          },
         });
       }
     } else {
@@ -137,7 +155,7 @@ function buildFallbackSegmentsFromText(rawText) {
         text: para,
         gender: 'male',
         type: 'narration',
-        voice_config: { locale: 'id-ID', voice_name: 'id-ID-Ardi-Male' },
+        voice_config: { locale: 'id-ID', voice_name: 'id-ID-ArdiNeural' },
       });
     }
   }

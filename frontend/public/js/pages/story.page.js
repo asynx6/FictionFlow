@@ -34,13 +34,29 @@ const ttsQueue = new TtsQueueManager();
 
 function stopSpeaking() {
   ttsQueue.stop();
+  resetUtteranceState();
+  EventBus.emit(Events.TTS_END);
+  updateGlobalTtsButtons();
+}
+
+/** Shared reset: dipanggil dari stopSpeaking user-action DAN dari
+ * ttsQueueManager 'tts:playback-finished' event (natural playback complete). */
+function resetUtteranceState() {
+  if (!currentUtterance.isPlaying && !currentUtterance.isPaused && currentUtterance.id === null) {
+    return; // already clean
+  }
   currentUtterance.id = null;
   currentUtterance.isPlaying = false;
   currentUtterance.isPaused = false;
   currentUtterance.mode = null;
+}
+
+// Reset state saat TTS selesai natural (queue emit CustomEvent 'tts:playback-finished').
+window.addEventListener('tts:playback-finished', () => {
+  resetUtteranceState();
   EventBus.emit(Events.TTS_END);
   updateGlobalTtsButtons();
-}
+});
 
 function pauseSpeaking() {
   if (!currentUtterance.isPlaying || currentUtterance.isPaused) return;
@@ -73,32 +89,48 @@ function updateGlobalTtsButtons() {
   });
 }
 
-/** Pilih voice browser yang paling cocok dengan locale/voice_name dari segment. */
+/**
+ * Pilih voice browser yang paling cocok dengan locale/gender dari segment.
+ * Locale/voice_name dari LLM diabaikan — kita pakai pack user (id-ID / en-US)
+ * supaya narasi + dialog konsisten gender di seluruh cerita.
+ */
 function pickBrowserVoiceForSegment(segment) {
   const voices = ttsEngine.getVoices() || [];
   if (voices.length === 0) return null;
-  const locale = (segment?.voice_config?.locale || 'id-ID').toLowerCase();
-  const desiredName = (segment?.voice_config?.voice_name || '').toLowerCase();
+  const pack = getActiveVoicePack();
   const gender = segment?.gender;
 
-  // 1) Exact name match (mis. "id-ID-Ardi-Male" jarang ada di browser, tapi dicoba).
-  if (desiredName) {
-    const exact = voices.find((v) => v.name.toLowerCase() === desiredName);
-    if (exact) return exact;
-  }
-  // 2) Locale prefix match.
-  const localeMatch = voices.find((v) => (v.lang || '').toLowerCase().startsWith(locale.split('-')[0]));
+  // 1) Locale prefix match (id-ID / en-US).
+  const localeMatch = voices.find((v) => (v.lang || '').toLowerCase() === pack.toLowerCase());
   if (localeMatch) return localeMatch;
+  // 2) Locale prefix loosened.
+  const prefixMatch = voices.find((v) => (v.lang || '').toLowerCase().startsWith(pack.split('-')[0]));
+  if (prefixMatch) return prefixMatch;
   // 3) Gender-based filter.
   if (gender === 'female') {
-    const f = voices.find((v) => /female|woman|zira|samantha|gadis/i.test(v.name));
+    const f = voices.find((v) => /female|woman|zira|samantha|gadis|jenny/i.test(v.name));
     if (f) return f;
   } else if (gender === 'male') {
-    const m = voices.find((v) => /male|man|david|mark|daniel|ardi/i.test(v.name));
+    const m = voices.find((v) => /male|man|david|mark|daniel|ardi|guy/i.test(v.name));
     if (m) return m;
   }
   // 4) First voice.
   return voices[0] ?? null;
+}
+
+/** Get active voice pack dari `<select id="voicePack">`, fallback id-ID. */
+function getActiveVoicePack() {
+  return (voicePack?.value || localStorage.getItem('fictionflow_voice_pack') || 'id-ID').toString();
+}
+
+/** Map pack + gender → EdgeTTS voice_name yang valid. Sumber kebenaran tunggal. */
+function pickEdgeVoiceForSegment(pack, gender) {
+  const g = (gender ?? '').toString();
+  if (pack === 'en-US') {
+    return g === 'female' ? 'en-US-JennyNeural' : 'en-US-GuyNeural';
+  }
+  // Default: id-ID.
+  return g === 'female' ? 'id-ID-GadisNeural' : 'id-ID-ArdiNeural';
 }
 
 /**
@@ -261,7 +293,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // DOM Elements - TTS
   const ttsToggle = document.getElementById('ttsToggle');
-  const voiceSelect = document.getElementById('voiceSelect');
+  const voicePack = document.getElementById('voicePack');
   const ttsIndicator = document.getElementById('ttsIndicator');
 
   // DOM Elements - Chat
@@ -561,38 +593,19 @@ document.addEventListener('DOMContentLoaded', async () => {
   if (memoryBackdrop) memoryBackdrop.addEventListener('click', closeMemoryWindow);
 
   // --- TTS Initialization ---
+  // Pack-based: 2 pilihan (Indonesian / English US). Tidak pakai list browser
+  // voices lagi — setiap pack berisi 1 male + 1 female Neural voice dari EdgeTTS,
+  // dan Web Speech API fallback otomatis pakai locale yang sama.
   const initTTS = async () => {
-    const loaded = await ttsEngine.init();
-    if (!loaded) {
-      voiceSelect.innerHTML = `<option value="">Browser tidak support TTS</option>`;
-      ttsToggle.disabled = true;
-      return;
+    await ttsEngine.init();
+    const storedPack = localStorage.getItem('fictionflow_voice_pack');
+    if (storedPack && voicePack) {
+      voicePack.value = storedPack;
     }
-
-    const voices = ttsEngine.getVoices();
-    if (voices.length === 0) {
-      voiceSelect.innerHTML = `<option value="">Tidak ada suara tersedia</option>`;
-      return;
-    }
-
-    voiceSelect.innerHTML = voices.map((v, i) =>
-      `<option value="${i}">${v.name} (${v.lang})</option>`
-    ).join('');
-    voiceSelect.disabled = false;
-
-    const storedVoiceIndex = localStorage.getItem('fictionflow_voice');
-    if (storedVoiceIndex && voices[storedVoiceIndex]) {
-      voiceSelect.value = storedVoiceIndex;
-      ttsEngine.setVoice(storedVoiceIndex);
-    }
-
-    const storedTtsState = localStorage.getItem('fictionflow_tts_enabled') === 'true';
-    ttsToggle.checked = storedTtsState;
   };
 
-  if (voiceSelect) voiceSelect.addEventListener('change', (e) => {
-    ttsEngine.setVoice(e.target.value);
-    localStorage.setItem('fictionflow_voice', e.target.value);
+  if (voicePack) voicePack.addEventListener('change', (e) => {
+    localStorage.setItem('fictionflow_voice_pack', e.target.value);
   });
 
   if (ttsToggle) {
@@ -763,20 +776,12 @@ document.addEventListener('DOMContentLoaded', async () => {
         factCountBadge.textContent = `${facts.length} fakta`;
       }
 
-      if (!localStorage.getItem('fictionflow_voice')) {
-        const isFemale = currentStory.ai_gender === 'female';
-        const voices = ttsEngine.getVoices();
-        const targetVoice = voices.findIndex(v => {
-          const name = v.name.toLowerCase();
-          if (isFemale && (name.includes('female') || name.includes('girl') || name.includes('woman') || name.includes('zira'))) return true;
-          if (!isFemale && (name.includes('male') || name.includes('boy') || name.includes('man') || name.includes('david'))) return true;
-          return false;
-        });
-        if (targetVoice !== -1) {
-          voiceSelect.value = targetVoice;
-          ttsEngine.setVoice(targetVoice);
-          localStorage.setItem('fictionflow_voice', targetVoice);
-        }
+      if (!localStorage.getItem('fictionflow_voice_pack')) {
+        const aiName = (currentStory.ai_name || '').toLowerCase();
+        const looksEnglish = /^[a-z .'-]+$/.test(aiName) && !/(aria|sinta|dewi|luna|lestari|putri)/i.test(aiName);
+        const def = looksEnglish ? 'en-US' : 'id-ID';
+        localStorage.setItem('fictionflow_voice_pack', def);
+        if (voicePack) voicePack.value = def;
       }
 
       const msgRes = await api.get(`/stories/${storyId}/messages`);
