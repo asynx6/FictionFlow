@@ -3,7 +3,9 @@ import { themeManager } from '../core/themeManager.js';
 import { Events, EventBus } from '../core/eventBus.js';
 import { ttsEngine } from '../core/ttsEngine.js';
 import { renderMarkdown } from '../core/markdownRenderer.js';
-import { TtsQueueManager } from '../core/ttsQueueManager.js';
+// Bug-B6: import the singleton ttsQueue (with pagehide hard-reset wire-up)
+// so that navigation round-trip doesn't leak Audio/Blob URL state.
+import { ttsQueue, TtsQueueManager } from '../core/ttsQueueManager.js';
 
 const FONT_SIZE_KEY = 'fictionflow_font_size';
 const READING_MODE_KEY = 'fictionflow_reading_mode';
@@ -29,8 +31,8 @@ const currentUtterance = {
   mode: null,
 };
 
-// Audio playback delegate — single source of truth untuk playback.
-const ttsQueue = new TtsQueueManager();
+// Audio playback delegate — singleton imported from ttsQueueManager.js
+// (also wires pagehide hard-reset for B6 navigation round-trip).
 
 function stopSpeaking() {
   ttsQueue.stop();

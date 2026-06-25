@@ -395,6 +395,43 @@ export class TtsQueueManager {
   }
 }
 
+// Bug-B6 root cause fix: SPA navigate Dashboard → kembali Story → replay
+// silent failure. Window unload flush audio element + Blob URL + abort
+// in-flight fetch + Web Speech cancellation. Fresh module-load tidak
+// auto-reset singleton, jadi listener ini panggil _disposeCurrent() dan
+// reset semua state untuk memastikan next mount tidak start dengan
+// stale reference.
+//
+// Singleton export — story.page.js juga import ini untuk klik handler.
+export const ttsQueue = new TtsQueueManager();
+
+function hardResetOnHide() {
+  if (ttsQueue && typeof ttsQueue._disposeCurrent === 'function') {
+    ttsQueue._disposeCurrent();
+    ttsQueue.playing = false;
+    ttsQueue.paused = false;
+    ttsQueue.index = 0;
+    ttsQueue.currentUtterance = null;
+    ttsQueue.currentSegmentEl = null;
+  }
+  try {
+    if (typeof window !== 'undefined' && window.speechSynthesis) {
+      window.speechSynthesis.cancel();
+      window.speechSynthesis.pause?.();
+    }
+  } catch { /* ignore */ }
+}
+
+if (typeof window !== 'undefined') {
+  // pagehide fires lebih reliable dari beforeunload (e.g. when in bfcache).
+  window.addEventListener('pagehide', hardResetOnHide);
+  window.addEventListener('beforeunload', hardResetOnHide);
+  // visibilitychange ke 'hidden' = user switch tab / start navigate — pre-flush.
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') hardResetOnHide();
+  });
+}
+
 function langFilter(lang) {
   if (!lang) return '';
   return lang.toLowerCase().split('-')[0];
