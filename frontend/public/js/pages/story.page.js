@@ -294,6 +294,19 @@ document.addEventListener('DOMContentLoaded', async () => {
   let _onCancelError = null;
   let _factPollTimerId = null;
 
+  // `data-segments` attribute stores LLM audio_segments JSON via setAttribute.
+  // JSON.stringify does NOT escape `<`/`>` — but setAttribute+getAttribute is
+  // HTML-attribute safe (no decoding). DO NOT assign this value to innerHTML
+  // of any element. Use _stashSegments() to write; _readSegments() to consume.
+  function _stashSegments(ttsBtn, segs) {
+    ttsBtn.setAttribute('data-segments', JSON.stringify(segs));
+  }
+  function _readSegments(ttsBtn) {
+    const raw = ttsBtn && ttsBtn.getAttribute && ttsBtn.getAttribute('data-segments');
+    if (!raw) return null;
+    try { return JSON.parse(raw); } catch { return null; }
+  }
+
   function _setAiErrorHandlers({ onContinue, onCancel }) {
     _onContinueError = onContinue;
     _onCancelError = onCancel;
@@ -707,15 +720,10 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (ttsBtn) {
         ttsBtn.addEventListener('click', () => {
           const id = ttsBtn.getAttribute('data-msg-id');
-          const segsAttr = ttsBtn.getAttribute('data-segments');
-          if (segsAttr) {
-            try {
-              const segs = JSON.parse(segsAttr);
-              speakMessage(id, segs);
-              return;
-            } catch (err) {
-              // Fallback ke text legacy
-            }
+          const segs = _readSegments(ttsBtn);
+          if (segs) {
+            speakMessage(id, segs);
+            return;
           }
           const text = decodeURIComponent(ttsBtn.getAttribute('data-text') || '');
           speakMessage(id, text);
@@ -810,7 +818,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             currentAudioSegments[m.id] = segs;
             const ttsBtn = bubble.querySelector('.tts-btn');
             if (ttsBtn) {
-              ttsBtn.setAttribute('data-segments', JSON.stringify(segs));
+              _stashSegments(ttsBtn, segs);
               ttsBtn.title = `Dengarkan (${segs.length} segmen)`;
             }
           }
@@ -987,7 +995,7 @@ document.addEventListener('DOMContentLoaded', async () => {
               const ttsBtn = aiBubble.querySelector('.tts-btn');
               if (ttsBtn) {
                 // Stash segments sebagai JSON di attribute.
-                ttsBtn.setAttribute('data-segments', JSON.stringify(segs));
+                _stashSegments(ttsBtn, segs);
                 ttsBtn.setAttribute('data-text', encodeURIComponent(finalContent));
                 ttsBtn.title = `Dengarkan (${segs.length} segmen)`;
               }
