@@ -28,6 +28,8 @@ const insertMessageStmt = db.prepare(`
   VALUES (?, ?, ?, ?)
 `);
 
+const MAX_MESSAGE_CONTENT = 20000;
+
 function requireStory(req, _res, next) {
   const story = getStoryStmt.get(req.params.id);
   if (!story) return next(new HttpError(404, 'Story tidak ditemukan.'));
@@ -54,6 +56,9 @@ router.get('/', (req, res) => {
 router.post('/', async (req, res, next) => {
   const content = (req.body?.content ?? '').toString().trim();
   if (!content) return next(new HttpError(400, 'Pesan user kosong.'));
+  if (content.length > MAX_MESSAGE_CONTENT) {
+    return next(new HttpError(413, `Pesan melebihi ${MAX_MESSAGE_CONTENT} karakter.`));
+  }
 
   if (!env.MODEL_PROVIDER_API_KEY) {
     return next(
