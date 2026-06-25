@@ -135,7 +135,138 @@ export class TtsQueueManager {
   }
 
   _speakCurrent() {
-    // Implementation dipindah ke hybrid playback di Task 5.
+    if (!this.playing) return;
+    if (this.index >= this.segments.length) {
+      this._finish();
+      return;
+    }
+    const segment = this.segments[this.index];
+
+    this.highlightCurrentSegment();
+    this.emit('segment', { index: this.index, segment });
+
+    // Cleanup state sebelumnya (jangan leak Blob URL antar segment).
+    this._disposeCurrent();
+
+    const controller = new AbortController();
+    this._activeAbort = controller;
+
+    // Timeout fetch 8s; abort kalau masih loading setelah itu.
+    this._currentTimeoutId = setTimeout(() => {
+      controller.abort();
+    }, this._fetchTimeoutMs);
+
+    const segmentForFallback = segment;
+    const fallbackAndAdvance = () => {
+      this._speakFallbackBrowser(segmentForFallback, () => {
+        this.clearHighlight();
+        this.index += 1;
+        if (this.playing) this._speakCurrent();
+      });
+    };
+
+    import('../api/apiClient.js').then(({ apiClient }) => {
+      apiClient
+        .synthesizeTts({
+          text: segment.text,
+          voice: resolveTtsVoice(segment),
+          gender: segment.gender,
+          signal: controller.signal,
+        })
+        .then((blob) => {
+          clearTimeout(this._currentTimeoutId);
+          this._currentTimeoutId = null;
+          this._activeAbort = null;
+          if (!this.playing || this.index >= this.segments.length) {
+            // Mungkin di-stop saat loading.
+            return;
+          }
+          this._playBlob(blob, segmentForFallback, fallbackAndAdvance);
+        })
+        .catch((err) => {
+          clearTimeout(this._currentTimeoutId);
+          this._currentTimeoutId = null;
+          this._activeAbort = null;
+          if (err?.name === 'AbortError') {
+            // User stop: diam saja, no fallback.
+            return;
+          }
+          console.warn('[tts-queue] Fetch gagal:', err.message);
+          fallbackAndAdvance();
+        });
+    });
+  }
+
+  _playBlob(blob, segmentForFallback, fallbackAndAdvance) {
+    const url = URL.createObjectURL(blob);
+    this._currentBlobUrl = url;
+    const audio = new Audio(url);
+    this._currentAudioEl = audio;
+
+    audio.onended = () => {
+      this._disposeCurrent();
+      this.clearHighlight();
+      this.index += 1;
+      if (this.playing) this._speakCurrent();
+    };
+    audio.onerror = () => {
+      console.warn('[tts-queue] Audio decode error, fallback Web Speech.');
+      this._disposeCurrent();
+      fallbackAndAdvance();
+    };
+
+    audio.play().catch((err) => {
+      console.warn('[tts-queue] audio.play() rejected:', err.message);
+      this._disposeCurrent();
+      fallbackAndAdvance();
+    });
+  }
+
+  _speakFallbackBrowser(segment, onEnd) {
+    if (!('speechSynthesis' in window)) {
+      // Tidak ada fallback apapun.
+      onEnd?.();
+      return;
+    }
+    const utter = new SpeechSynthesisUtterance(segment.text);
+    const voice = (this.voices ?? []).find(
+      (v) => v.lang?.toLowerCase().startsWith((segment?.voice_config?.locale ?? 'id-id').split('-')[0])
+    );
+    if (voice) utter.voice = voice;
+    utter.lang = segment?.voice_config?.locale ?? 'id-ID';
+    utter.onend = () => onEnd?.();
+    utter.onerror = () => onEnd?.();
+    try {
+      window.speechSynthesis.speak(utter);
+    } catch {
+      onEnd?.();
+    }
+  }
+
+  _disposeCurrent() {
+    if (this._currentAudioEl) {
+      try {
+        this._currentAudioEl.pause();
+        this._currentAudioEl.src = '';
+      } catch { /* ignore */ }
+      this._currentAudioEl = null;
+    }
+    if (this._currentBlobUrl) {
+      try {
+        URL.revokeObjectURL(this._currentBlobUrl);
+      } catch { /* ignore */ }
+      this._currentBlobUrl = null;
+    }
+    if (this._currentTimeoutId) {
+      clearTimeout(this._currentTimeoutId);
+      this._currentTimeoutId = null;
+    }
+    if (this._activeAbort) {
+      try {
+        this._activeAbort.abort();
+      } catch { /* ignore */ }
+      this._activeAbort = null;
+    }
   }
 
   pause() {
@@ -175,10 +306,6 @@ export class TtsQueueManager {
     this.clearHighlight();
     this.emit('state', this.snapshot());
   }
-}
-
-function clamp(v, min, max) {
-  return Math.min(max, Math.max(min, Number(v) || 0));
 }
 
 function langFilter(lang) {
