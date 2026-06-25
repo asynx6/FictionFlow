@@ -1,6 +1,25 @@
 import { env } from '../config/env.js';
 import fallbackModels from '../config/fallbackModels.json' with { type: 'json' };
 
+// Guard untuk mencegah request body yang tidak terkontrol dikirim ke
+// provider. Dipakai di streamChatCompletion + chatCompletionOnce sebagai
+// safety net terhadap prompt/context membengkak (bisa picu 413/500 di
+// upstream). 200KB cukup untuk typical chat dengan system prompt panjang
+// + beberapa ribu token history; kalau melewati → throw lebih awal
+// daripada membiarkan upstream mengembalikan error generik.
+const MAX_REQUEST_BYTES = 200_000;
+
+function assertBodyFits(body) {
+  const serialized = JSON.stringify(body);
+  const bytes = Buffer.byteLength(serialized, 'utf-8');
+  if (bytes > MAX_REQUEST_BYTES) {
+    throw new Error(
+      `Request body terlalu besar (${bytes} bytes > ${MAX_REQUEST_BYTES}). ` +
+        'Kurangi konteks atau pecah pesan.'
+    );
+  }
+}
+
 const MAX_RETRIES = 1;
 
 async function listProviderModels() {
@@ -65,6 +84,7 @@ export async function* streamChatCompletion({ model, messages, signal }) {
     messages,
     stream: true,
   };
+  assertBodyFits(body);
 
   let attempt = 0;
   let lastError;
@@ -154,6 +174,8 @@ export async function chatCompletionOnce({ model, messages, signal, temperature 
     stream: false,
   };
   if (typeof temperature === 'number') body.temperature = temperature;
+
+  assertBodyFits(body);
 
   const res = await fetch(`${env.MODEL_PROVIDER_BASE_URL}/chat/completions`, {
     method: 'POST',
