@@ -3,37 +3,58 @@ import { themeManager } from '../core/themeManager.js';
 import { Events, EventBus } from '../core/eventBus.js';
 import { ttsEngine } from '../core/ttsEngine.js';
 import { renderMarkdown } from '../core/markdownRenderer.js';
+import { TtsQueueManager } from '../core/ttsQueueManager.js';
+
+const FONT_SIZE_KEY = 'fictionflow_font_size';
+const READING_MODE_KEY = 'fictionflow_reading_mode';
+const FONT_SIZE_MIN = 14;
+const FONT_SIZE_MAX = 22;
+const FONT_SIZE_DEFAULT = 16;
+
+const FONT_SIZE_MAP = {
+  14: 'font-size-xs',
+  15: 'font-size-sm',
+  16: 'font-size-md',
+  17: 'font-size-lg',
+  18: 'font-size-xl',
+  20: 'font-size-2xl',
+  22: 'font-size-3xl',
+};
 
 const currentUtterance = {
   id: null,
-  utterance: null,
   isPlaying: false,
   isPaused: false,
+  // Mode aktif: 'mixed' = audio_segments[], 'legacy' = Web Speech single text.
+  mode: null,
 };
 
+// Audio playback delegate — single source of truth untuk playback.
+const ttsQueue = new TtsQueueManager();
+
 function stopSpeaking() {
-  window.speechSynthesis.cancel();
-  currentUtterance.utterance = null;
+  ttsQueue.stop();
+  currentUtterance.id = null;
   currentUtterance.isPlaying = false;
   currentUtterance.isPaused = false;
+  currentUtterance.mode = null;
   EventBus.emit(Events.TTS_END);
   updateGlobalTtsButtons();
 }
 
 function pauseSpeaking() {
-  if (currentUtterance.isPlaying && !currentUtterance.isPaused) {
-    window.speechSynthesis.pause();
-    currentUtterance.isPaused = true;
-    updateGlobalTtsButtons();
-  }
+  if (!currentUtterance.isPlaying || currentUtterance.isPaused) return;
+  // Pause non-blocking; fetches tetap hidup agar resume tidak re-fetch.
+  ttsQueue.pause();
+  currentUtterance.isPaused = true;
+  updateGlobalTtsButtons();
 }
 
 function resumeSpeaking() {
-  if (currentUtterance.isPaused) {
-    window.speechSynthesis.resume();
-    currentUtterance.isPaused = false;
-    updateGlobalTtsButtons();
-  }
+  if (!currentUtterance.isPaused) return;
+  ttsQueue.resume();
+  currentUtterance.isPaused = false;
+  updateGlobalTtsButtons();
 }
 
 function updateGlobalTtsButtons() {
@@ -43,17 +64,77 @@ function updateGlobalTtsButtons() {
     if (currentUtterance.id === msgId && currentUtterance.isPlaying) {
       icon.textContent = currentUtterance.isPaused ? 'play_arrow' : 'pause';
       btn.title = currentUtterance.isPaused ? 'Lanjutkan' : 'Jeda';
+      btn.classList.add('playing');
     } else {
       icon.textContent = 'volume_up';
       btn.title = 'Dengarkan';
+      btn.classList.remove('playing');
     }
   });
 }
 
-function speakMessage(msgId, text) {
-  if (!window.speechSynthesis) return;
+/** Pilih voice browser yang paling cocok dengan locale/voice_name dari segment. */
+function pickBrowserVoiceForSegment(segment) {
+  const voices = ttsEngine.getVoices() || [];
+  if (voices.length === 0) return null;
+  const locale = (segment?.voice_config?.locale || 'id-ID').toLowerCase();
+  const desiredName = (segment?.voice_config?.voice_name || '').toLowerCase();
+  const gender = segment?.gender;
 
-  // If already playing this message, toggle pause/resume
+  // 1) Exact name match (mis. "id-ID-Ardi-Male" jarang ada di browser, tapi dicoba).
+  if (desiredName) {
+    const exact = voices.find((v) => v.name.toLowerCase() === desiredName);
+    if (exact) return exact;
+  }
+  // 2) Locale prefix match.
+  const localeMatch = voices.find((v) => (v.lang || '').toLowerCase().startsWith(locale.split('-')[0]));
+  if (localeMatch) return localeMatch;
+  // 3) Gender-based filter.
+  if (gender === 'female') {
+    const f = voices.find((v) => /female|woman|zira|samantha|gadis/i.test(v.name));
+    if (f) return f;
+  } else if (gender === 'male') {
+    const m = voices.find((v) => /male|man|david|mark|daniel|ardi/i.test(v.name));
+    if (m) return m;
+  }
+  // 4) First voice.
+  return voices[0] ?? null;
+}
+
+/**
+ * Logika playback pindah ke ttsQueueManager. Method ini jadi no-op (kept
+ * untuk backward-compat dengan legacy callers).
+ */
+function playSegment(_seg) {
+  // no-op — ttsQueueManager._speakCurrent() handles fetch + Audio + fallback.
+}
+
+function playSegmentBrowser(_seg) {
+  // no-op — ttsQueueManager._speakFallbackBrowser() handles Web Speech fallback.
+}
+
+function playNextSegment() {
+  // no-op — ttsQueueManager manages sequencing per segment events.
+}
+
+/**
+ * Map simpan audio_segments per message bubble, agar tombol TTS bisa akses.
+ * Key = message id, value = array dari SSE done.audio_segments.
+ */
+const currentAudioSegments = {};
+
+function speakMessage(msgId, textOrSegments) {
+  if (!window.speechSynthesis && !(typeof Audio !== 'undefined')) {
+    console.warn('[TTS] Browser tidak support TTS.');
+    return;
+  }
+  const ttsEnabled = document.getElementById('ttsToggle')?.checked;
+  if (ttsEnabled === false) {
+    const settingsBtn = document.getElementById('settingsToggleBtn');
+    if (settingsBtn) settingsBtn.click();
+    return;
+  }
+
   if (currentUtterance.id === msgId && currentUtterance.isPlaying) {
     if (currentUtterance.isPaused) {
       resumeSpeaking();
@@ -63,12 +144,26 @@ function speakMessage(msgId, text) {
     return;
   }
 
-  // Stop any current speech
   stopSpeaking();
 
-  const cleaned = ttsEngine.parseTtsText(text);
-  if (!cleaned) return;
+  const segments = Array.isArray(textOrSegments) ? textOrSegments : null;
+  if (segments && segments.length > 0) {
+    // Mixed mode: Edge TTS per segment + Web Speech fallback.
+    currentAudioSegments[msgId] = segments;
+    currentUtterance.id = msgId;
+    currentUtterance.mode = 'mixed';
+    currentUtterance.isPlaying = true;
+    currentUtterance.isPaused = false;
+    EventBus.emit(Events.TTS_START);
+    ttsQueue.enqueueSegments(segments);
+    ttsQueue.play();
+    updateGlobalTtsButtons();
+    return;
+  }
 
+  // Legacy mode: fallback kalau audio_segments tidak tersedia (mis. cerita lama).
+  const cleaned = ttsEngine.parseTtsText(typeof textOrSegments === 'string' ? textOrSegments : '');
+  if (!cleaned) return;
   const utterance = new SpeechSynthesisUtterance(cleaned);
   const voices = ttsEngine.getVoices();
   const storedIndex = localStorage.getItem('fictionflow_voice');
@@ -77,29 +172,34 @@ function speakMessage(msgId, text) {
   }
   utterance.rate = 1;
   utterance.pitch = 1;
+  utterance.lang = (currentStory?.language_style === 'ceplas_ceplos' || currentStory?.language_style === 'profesional')
+    ? 'id-ID'
+    : 'id-ID';
 
   utterance.onstart = () => {
     currentUtterance.id = msgId;
-    currentUtterance.utterance = utterance;
     currentUtterance.isPlaying = true;
     currentUtterance.isPaused = false;
+    currentUtterance.mode = 'legacy';
     EventBus.emit(Events.TTS_START);
     updateGlobalTtsButtons();
   };
-
   utterance.onend = () => {
-    if (currentUtterance.id === msgId) {
-      stopSpeaking();
-    }
+    if (currentUtterance.id === msgId) stopSpeaking();
   };
-
   utterance.onerror = () => {
-    if (currentUtterance.id === msgId) {
-      stopSpeaking();
-    }
+    if (currentUtterance.id === msgId) stopSpeaking();
   };
 
   window.speechSynthesis.speak(utterance);
+}
+
+function speakLastAiMessage() {
+  const aiBubbles = document.querySelectorAll('.msg-ai-block');
+  if (!aiBubbles.length) return;
+  const last = aiBubbles[aiBubbles.length - 1];
+  const ttsBtn = last.querySelector('.tts-btn');
+  if (ttsBtn) ttsBtn.click();
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
@@ -118,11 +218,30 @@ document.addEventListener('DOMContentLoaded', async () => {
   // DOM Elements - Theme
   const themeToggleBtn = document.getElementById('themeToggleBtn');
   const themeIcon = document.getElementById('themeIcon');
+  const toolbarThemeIcon = document.getElementById('toolbarThemeIcon');
 
   // DOM Elements - Header
   const headerAiName = document.getElementById('headerAiName');
   const headerAvatar = document.getElementById('headerAvatar');
   const headerContext = document.getElementById('headerContext');
+  const mainHeader = document.getElementById('mainHeader');
+
+  // DOM Elements - Reading Toolbar
+  const readingToolbar = document.getElementById('readingToolbar');
+  const decreaseFontBtn = document.getElementById('decreaseFontBtn');
+  const increaseFontBtn = document.getElementById('increaseFontBtn');
+  const fontSizeLabel = document.getElementById('fontSizeLabel');
+  const fontSizeSlider = document.getElementById('fontSizeSlider');
+  const settingsFontSizeLabel = document.getElementById('settingsFontSizeLabel');
+  const exitReadingModeBtn = document.getElementById('exitReadingModeBtn');
+  const readingModeFooterBtn = document.getElementById('readingModeFooterBtn');
+  const toolbarTtsBtn = document.getElementById('toolbarTtsBtn');
+  const toolbarThemeBtn = document.getElementById('toolbarThemeBtn');
+  const toolbarSettingsBtn = document.getElementById('toolbarSettingsBtn');
+  const readingProgressBar = document.getElementById('readingProgressBar');
+
+  // DOM Elements - Reading Mode Toggle
+  const readingModeToggle = document.getElementById('readingModeToggle');
 
   // DOM Elements - Settings
   const settingsToggleBtn = document.getElementById('settingsToggleBtn');
@@ -170,38 +289,146 @@ document.addEventListener('DOMContentLoaded', async () => {
   let pendingError = null;
   let pendingUserBubble = null;
   let pendingAiBubble = null;
+  let readingMode = false;
+  let fontSize = FONT_SIZE_DEFAULT;
 
-  // --- Theme Logic ---
-  const updateThemeIcon = () => {
-    const theme = themeManager.getTheme();
-    themeIcon.textContent = theme === 'dark' ? 'dark_mode' : (theme === 'light' ? 'light_mode' : 'child_care');
+  // --- Reading Experience Logic ---
+  const clampFontSize = (v) => Math.max(FONT_SIZE_MIN, Math.min(FONT_SIZE_MAX, v));
+  const resolveInitialFontSize = () => {
+    const saved = parseInt(localStorage.getItem(FONT_SIZE_KEY), 10);
+    return clampFontSize(Number.isFinite(saved) ? saved : FONT_SIZE_DEFAULT);
   };
-  updateThemeIcon();
-  themeToggleBtn.addEventListener('click', () => {
+
+  const applyFontSize = (size) => {
+    fontSize = clampFontSize(size);
+    localStorage.setItem(FONT_SIZE_KEY, fontSize);
+    if (fontSizeLabel) fontSizeLabel.textContent = `${fontSize}px`;
+    if (settingsFontSizeLabel) settingsFontSizeLabel.textContent = `${fontSize}px`;
+    if (fontSizeSlider) fontSizeSlider.value = fontSize;
+
+    Object.values(FONT_SIZE_MAP).forEach((cls) => chatContainer.classList.remove(cls));
+    const sizeClass = FONT_SIZE_MAP[fontSize] || FONT_SIZE_MAP[FONT_SIZE_DEFAULT];
+    chatContainer.classList.add(sizeClass);
+    // Set CSS variable dan kelas aktif di msg-content agar styling menang dari text-[15px]
+    chatContainer.style.setProperty('--reading-font-size', `${fontSize}px`);
+    chatContainer.querySelectorAll('.msg-ai-block .msg-content').forEach((el) => {
+      el.classList.add('font-size-active');
+    });
+  };
+
+  const changeFontSize = (delta) => applyFontSize(fontSize + delta);
+
+  const applyReadingMode = (active) => {
+    readingMode = !!active;
+    localStorage.setItem(READING_MODE_KEY, readingMode ? 'true' : 'false');
+    document.body.classList.toggle('is-reading-mode', readingMode);
+    if (readingToolbar) readingToolbar.classList.toggle('hidden', !readingMode);
+    if (mainHeader) mainHeader.classList.toggle('hidden', readingMode);
+    if (readingModeToggle) readingModeToggle.checked = readingMode;
+  };
+
+  const toggleReadingMode = () => applyReadingMode(!readingMode);
+
+  const updateProgressBar = () => {
+    if (!readingProgressBar) return;
+    const scrollTop = chatContainer.scrollTop;
+    const scrollHeight = chatContainer.scrollHeight - chatContainer.clientHeight;
+    if (scrollHeight <= 0) {
+      readingProgressBar.style.width = '0%';
+      return;
+    }
+    const progress = Math.min(100, Math.max(0, (scrollTop / scrollHeight) * 100));
+    readingProgressBar.style.width = `${progress}%`;
+  };
+
+  const updateThemeIcons = () => {
+    const theme = themeManager.getTheme();
+    const icon = theme === 'dark' ? 'dark_mode' : (theme === 'light' ? 'light_mode' : 'child_care');
+    if (themeIcon) themeIcon.textContent = icon;
+    if (toolbarThemeIcon) toolbarThemeIcon.textContent = icon;
+  };
+
+  const cycleTheme = () => {
     themeManager.toggleTheme();
-    updateThemeIcon();
+    updateThemeIcons();
+  };
+
+  applyFontSize(resolveInitialFontSize());
+  applyReadingMode(localStorage.getItem(READING_MODE_KEY) === 'true');
+  updateThemeIcons();
+
+  // Reading toolbar events
+  if (decreaseFontBtn) decreaseFontBtn.addEventListener('click', () => changeFontSize(-1));
+  if (increaseFontBtn) increaseFontBtn.addEventListener('click', () => changeFontSize(1));
+  if (fontSizeSlider) {
+    fontSizeSlider.addEventListener('input', (e) => applyFontSize(parseInt(e.target.value, 10)));
+  }
+  if (exitReadingModeBtn) exitReadingModeBtn.addEventListener('click', () => applyReadingMode(false));
+  if (readingModeFooterBtn) readingModeFooterBtn.addEventListener('click', toggleReadingMode);
+  if (readingModeToggle) readingModeToggle.addEventListener('change', (e) => applyReadingMode(e.target.checked));
+  if (toolbarTtsBtn) toolbarTtsBtn.addEventListener('click', speakLastAiMessage);
+
+  const updateTtsToggleUi = () => {
+    const enabled = ttsToggle ? ttsToggle.checked : false;
+    if (toolbarTtsBtn) {
+      toolbarTtsBtn.classList.toggle('active', enabled);
+      toolbarTtsBtn.title = enabled ? 'Dengarkan pesan terakhir (TTS aktif)' : 'Aktifkan TTS dulu di pengaturan';
+    }
+  };
+  if (ttsToggle) ttsToggle.addEventListener('change', updateTtsToggleUi);
+  if (toolbarThemeBtn) toolbarThemeBtn.addEventListener('click', cycleTheme);
+  if (toolbarSettingsBtn) toolbarSettingsBtn.addEventListener('click', openSettings);
+
+  // Theme header button
+  if (themeToggleBtn) themeToggleBtn.addEventListener('click', cycleTheme);
+
+  // Reading toolbar keyboard shortcuts
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && readingMode) {
+      applyReadingMode(false);
+      return;
+    }
+    const target = e.target;
+    if (target && (target.tagName === 'TEXTAREA' || target.tagName === 'INPUT' || target.isContentEditable)) return;
+    if (e.key === 't' || e.key === 'T') {
+      cycleTheme();
+      return;
+    }
+    if (e.ctrlKey || e.metaKey) {
+      if (e.key === 'ArrowUp' || e.key === '+') {
+        e.preventDefault();
+        changeFontSize(1);
+      } else if (e.key === 'ArrowDown' || e.key === '-') {
+        e.preventDefault();
+        changeFontSize(-1);
+      } else if (e.key === 'f' || e.key === 'F') {
+        e.preventDefault();
+        toggleReadingMode();
+      }
+    }
   });
 
   // --- Drawer Logic ---
-  const openSettings = () => {
+  function openSettings() {
     settingsPanel.classList.remove('hidden');
     setTimeout(() => {
       settingsDrawer.classList.remove('translate-x-full');
       settingsBackdrop.classList.add('opacity-100');
     }, 10);
-  };
+  }
 
-  const closeSettings = () => {
+  function closeSettings() {
     settingsDrawer.classList.add('translate-x-full');
     settingsBackdrop.classList.remove('opacity-100');
     setTimeout(() => {
       settingsPanel.classList.add('hidden');
     }, 300);
-  };
+  }
 
-  settingsToggleBtn.addEventListener('click', openSettings);
-  closeSettingsBtn.addEventListener('click', closeSettings);
-  settingsBackdrop.addEventListener('click', closeSettings);
+  if (settingsToggleBtn) settingsToggleBtn.addEventListener('click', openSettings);
+  if (closeSettingsBtn) closeSettingsBtn.addEventListener('click', closeSettings);
+  if (settingsBackdrop) settingsBackdrop.addEventListener('click', closeSettings);
+
   // --- AI Provider Error Dialog ---
   const openAiErrorDialog = (errorMessage) => {
     if (aiErrorMessage) aiErrorMessage.textContent = errorMessage || 'AI provider sedang tidak tersedia.';
@@ -224,6 +451,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   };
 
   if (aiErrorBackdrop) aiErrorBackdrop.addEventListener('click', closeAiErrorDialog);
+
   const openMemoryModal = async () => {
     closeSettings();
     memoryModal.classList.remove('hidden');
@@ -241,10 +469,16 @@ document.addEventListener('DOMContentLoaded', async () => {
       let mems = [];
       const rawMem = storyData?.dynamic_memory;
       if (rawMem) {
+        let parsed;
         if (typeof rawMem === 'string') {
-          try { mems = JSON.parse(rawMem)?.facts ?? []; } catch { /* ignore */ }
+          try { parsed = JSON.parse(rawMem); } catch { parsed = null; }
         } else {
-          mems = rawMem.facts ?? [];
+          parsed = rawMem;
+        }
+        if (Array.isArray(parsed)) {
+          mems = parsed;
+        } else if (parsed && Array.isArray(parsed.facts)) {
+          mems = parsed.facts;
         }
       }
 
@@ -253,15 +487,28 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (mems.length === 0) {
         memoryList.innerHTML = `<p class="text-sm text-theme-muted text-center py-6">Belum ada fakta yang diingat AI.</p>`;
       } else {
-        memoryList.innerHTML = mems.map(fact => `
-          <div class="p-3 bg-theme-bg rounded-xl border border-theme-border/30 mb-2 shadow-sm">
-            <div class="flex justify-between items-start mb-1">
-              <span class="text-xs font-semibold text-theme-accent bg-theme-accent/10 px-2 py-0.5 rounded uppercase tracking-wider">${fact.category ?? 'umum'}</span>
-              <span class="text-[10px] text-theme-muted">Tingkat: ${fact.importance_score ?? '?'}/10</span>
+        const escapeHtml2 = (s) => String(s ?? '')
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;')
+          .replace(/'/g, '&#039;');
+        memoryList.innerHTML = mems.map(fact => {
+          const category = fact.category ?? 'umum';
+          const key = fact.key ?? '';
+          const value = fact.value ?? fact.fact ?? fact.content ?? '';
+          const learned = fact.learned_at ? new Date(fact.learned_at).toLocaleString('id-ID', { dateStyle: 'short', timeStyle: 'short' }) : '';
+          return `
+            <div class="p-3 bg-theme-bg rounded-xl border border-theme-border/30 mb-2 shadow-sm">
+              <div class="flex justify-between items-start mb-1 gap-2">
+                <span class="text-xs font-semibold text-theme-accent bg-theme-accent/10 px-2 py-0.5 rounded uppercase tracking-wider truncate">${escapeHtml2(category)}</span>
+                <span class="text-[10px] text-theme-muted whitespace-nowrap">${learned}</span>
+              </div>
+              ${key ? `<p class="text-[11px] text-theme-muted font-mono mb-1">${escapeHtml2(key)}</p>` : ''}
+              <p class="text-sm text-theme-text mt-1 leading-relaxed">${escapeHtml2(value)}</p>
             </div>
-            <p class="text-sm text-theme-text mt-2 leading-relaxed">${fact.fact ?? fact.content ?? ''}</p>
-          </div>
-        `).join('');
+          `;
+        }).join('');
       }
     } catch (err) {
       memoryList.innerHTML = `<p class="text-sm text-red-500 text-center py-6">Gagal memuat memori.</p>`;
@@ -276,9 +523,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     }, 200);
   };
 
-  viewMemoryBtn.addEventListener('click', openMemoryModal);
-  closeMemoryBtn.addEventListener('click', closeMemoryWindow);
-  memoryBackdrop.addEventListener('click', closeMemoryWindow);
+  if (viewMemoryBtn) viewMemoryBtn.addEventListener('click', openMemoryModal);
+  if (closeMemoryBtn) closeMemoryBtn.addEventListener('click', closeMemoryWindow);
+  if (memoryBackdrop) memoryBackdrop.addEventListener('click', closeMemoryWindow);
 
   // --- TTS Initialization ---
   const initTTS = async () => {
@@ -310,23 +557,32 @@ document.addEventListener('DOMContentLoaded', async () => {
     ttsToggle.checked = storedTtsState;
   };
 
-  voiceSelect.addEventListener('change', (e) => {
+  if (voiceSelect) voiceSelect.addEventListener('change', (e) => {
     ttsEngine.setVoice(e.target.value);
     localStorage.setItem('fictionflow_voice', e.target.value);
   });
 
-  ttsToggle.addEventListener('change', (e) => {
-    localStorage.setItem('fictionflow_tts_enabled', e.target.checked);
-  });
+  if (ttsToggle) {
+    ttsToggle.addEventListener('change', (e) => {
+      localStorage.setItem('fictionflow_tts_enabled', e.target.checked);
+      updateTtsToggleUi();
+    });
+  }
+
+  updateTtsToggleUi();
 
   EventBus.on(Events.TTS_START, () => {
-    ttsIndicator.classList.remove('hidden');
-    ttsIndicator.classList.add('flex');
+    if (ttsIndicator) {
+      ttsIndicator.classList.remove('hidden');
+      ttsIndicator.classList.add('flex');
+    }
   });
 
   EventBus.on(Events.TTS_END, () => {
-    ttsIndicator.classList.add('hidden');
-    ttsIndicator.classList.remove('flex');
+    if (ttsIndicator) {
+      ttsIndicator.classList.add('hidden');
+      ttsIndicator.classList.remove('flex');
+    }
   });
 
 
@@ -358,7 +614,6 @@ document.addEventListener('DOMContentLoaded', async () => {
       let parsed = renderMarkdown(text);
       parsed = parsed.replace(/<notts>([\s\S]*?)<\/notts>/g, '<span class="text-theme-muted italic">*$1*</span>');
       parsed = parsed.replace(/<tts>([\s\S]*?)<\/tts>/g, '$1');
-      // Strip old role tags from displayed messages (data storage remains untouched)
       parsed = parsed.replace(/\[(MIKA|NARASI|AI|KARAKTER)\]\s*/gi, '');
       return parsed;
     } catch (err) {
@@ -393,7 +648,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   const createMessageBubble = (msg) => {
     const isUser = msg.role === 'user';
     const div = document.createElement('div');
-    div.className = `flex w-full ${isUser ? 'justify-end' : 'justify-start'} mb-5 group`;
+    div.className = `flex w-full ${isUser ? 'justify-end' : 'justify-start'} mb-5 sm:mb-6 group msg-entrance`;
     div.id = `msg-${msg.id}`;
 
     const messageContent = (msg.content ?? msg.raw_content ?? '').toString();
@@ -402,28 +657,26 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     if (isUser) {
       div.innerHTML = `
-        <div class="flex flex-col items-end max-w-[85%] sm:max-w-[75%] md:max-w-[65%]">
-           <div class="msg-content inline-block px-3.5 py-2 bg-theme-accent text-white rounded-2xl rounded-tr-md shadow-sm text-[15px] leading-snug break-words whitespace-pre-wrap min-w-0" style="width: fit-content; max-width: 100%;">
+        <div class="msg-user-block">
+           <div class="msg-content shadow-sm">
              ${contentHtml}
            </div>
-           <span class="text-[10px] text-theme-muted mt-1 opacity-0 group-hover:opacity-100 transition-opacity pr-1">${timeLabel}</span>
+           <span class="msg-time">${timeLabel}</span>
         </div>
       `;
     } else {
       div.innerHTML = `
-        <div class="flex gap-3 max-w-[92%] sm:max-w-[85%] md:max-w-[75%]">
-          <div class="w-8 h-8 rounded-full bg-theme-hover flex-shrink-0 flex items-center justify-center font-bold text-sm text-theme-text shadow-sm border border-theme-border/50 mt-0.5">
-            ${currentStory.ai_name.charAt(0).toUpperCase()}
-          </div>
-          <div class="flex flex-col items-start min-w-0">
-             <span class="text-xs font-semibold text-theme-muted mb-0.5 pl-1">${currentStory.ai_name}</span>
-             <div class="msg-content px-3.5 py-2.5 bg-theme-bg border border-theme-border/50 text-theme-text rounded-2xl rounded-tl-md shadow-sm text-[15px] leading-snug break-words min-w-0 relative" style="width: fit-content; max-width: 100%;">
+        <div class="msg-ai-block">
+          <div class="avatar" aria-hidden="true">${currentStory.ai_name.charAt(0).toUpperCase()}</div>
+          <div class="flex flex-col items-start min-w-0 flex-1">
+             <span class="msg-author">${currentStory.ai_name}</span>
+             <div class="msg-content prose-story">
                ${contentHtml}
                ${msg.is_typing ? '<span class="inline-block w-2 h-4 bg-theme-accent animate-pulse ml-1 align-middle"></span>' : ''}
              </div>
-             <div class="flex items-center gap-2 mt-1 pl-1">
+             <div class="flex items-center gap-2 mt-1.5 pl-1">
                <span class="text-[10px] text-theme-muted opacity-0 group-hover:opacity-100 transition-opacity">${timeLabel}</span>
-               <button class="tts-btn text-[10px] text-theme-muted hover:text-theme-accent transition-colors flex items-center gap-0.5" data-msg-id="${msg.id}" data-text="${encodeURIComponent(messageContent)}" title="Dengarkan">
+               <button class="tts-btn" data-msg-id="${msg.id}" data-text="${encodeURIComponent(messageContent)}" title="Dengarkan">
                  <span class="material-icons-round text-[14px]">volume_up</span>
                </button>
              </div>
@@ -433,8 +686,18 @@ document.addEventListener('DOMContentLoaded', async () => {
       const ttsBtn = div.querySelector('.tts-btn');
       if (ttsBtn) {
         ttsBtn.addEventListener('click', () => {
-          const text = decodeURIComponent(ttsBtn.getAttribute('data-text'));
           const id = ttsBtn.getAttribute('data-msg-id');
+          const segsAttr = ttsBtn.getAttribute('data-segments');
+          if (segsAttr) {
+            try {
+              const segs = JSON.parse(segsAttr);
+              speakMessage(id, segs);
+              return;
+            } catch (err) {
+              // Fallback ke text legacy
+            }
+          }
+          const text = decodeURIComponent(ttsBtn.getAttribute('data-text') || '');
           speakMessage(id, text);
         });
       }
@@ -457,11 +720,17 @@ document.addEventListener('DOMContentLoaded', async () => {
 
       const dynamicMem = currentStory.dynamic_memory;
       if (dynamicMem) {
-        let facts = [];
+        let parsed = null;
         if (typeof dynamicMem === 'string') {
-          try { facts = JSON.parse(dynamicMem)?.facts ?? []; } catch { /* ignore */ }
+          try { parsed = JSON.parse(dynamicMem); } catch { parsed = null; }
         } else {
-          facts = dynamicMem.facts ?? [];
+          parsed = dynamicMem;
+        }
+        let facts = [];
+        if (Array.isArray(parsed)) {
+          facts = parsed;
+        } else if (parsed && Array.isArray(parsed.facts)) {
+          facts = parsed.facts;
         }
         factCountBadge.textContent = `${facts.length} fakta`;
       }
@@ -484,6 +753,22 @@ document.addEventListener('DOMContentLoaded', async () => {
 
       const msgRes = await api.get(`/stories/${storyId}/messages`);
       const messages = msgRes.data?.messages ?? msgRes.data ?? [];
+      // Fetch TTS cache untuk setiap assistant message (mixed-mode replay).
+      let ttsByMessageId = {};
+      try {
+        const ttsRes = await api.get(`/stories/${storyId}/messages/tts-latest`);
+        const allTts = ttsRes.data?.items ?? ttsRes.data ?? [];
+        if (Array.isArray(allTts)) {
+          for (const entry of allTts) {
+            try {
+              const segs = JSON.parse(entry.segments_json || '[]');
+              ttsByMessageId[entry.message_id] = segs;
+            } catch (_) {}
+          }
+        }
+      } catch (_) {
+        // tts-latest optional, fail silent
+      }
 
       loadingChat.classList.add('hidden');
       chatList.innerHTML = '';
@@ -499,7 +784,17 @@ document.addEventListener('DOMContentLoaded', async () => {
         `;
       } else {
         messages.forEach(m => {
-          chatList.appendChild(createMessageBubble(m));
+          const bubble = createMessageBubble(m);
+          if (m.role === 'assistant' && ttsByMessageId[m.id]) {
+            const segs = ttsByMessageId[m.id];
+            currentAudioSegments[m.id] = segs;
+            const ttsBtn = bubble.querySelector('.tts-btn');
+            if (ttsBtn) {
+              ttsBtn.setAttribute('data-segments', JSON.stringify(segs));
+              ttsBtn.title = `Dengarkan (${segs.length} segmen)`;
+            }
+          }
+          chatList.appendChild(bubble);
         });
         scrollToBottom(true);
       }
@@ -521,6 +816,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   chatContainer.addEventListener('scroll', () => {
     const isAtBottom = chatContainer.scrollHeight - chatContainer.scrollTop <= chatContainer.clientHeight + 100;
     autoScroll = isAtBottom;
+    updateProgressBar();
 
     if (!isAtBottom) {
       scrollToBottomBtn.classList.remove('opacity-0');
@@ -658,14 +954,28 @@ document.addEventListener('DOMContentLoaded', async () => {
           openAiErrorDialog(data?.message || 'AI provider sedang tidak tersedia.');
         } else if (eventType === 'done') {
           aiMessageId = data?.message_id ?? null;
-          const finalContent = finalizeResponse(data?.full_content ?? displayedText);
+          // Backend mengirim audio_segments[] untuk mixed-mode TTS (Azure URL + Web Speech fallback).
+          // Backend kirim `full_content` = full_story (prosa), sudah bersih dari JSON wrapper.
+          const finalContent = data?.full_content ?? displayedText;
           displayedText = finalContent;
           updateBubbleContent(aiBubble, finalContent, false);
-          if (aiMessageId) setBubbleRealId(aiBubble, aiMessageId);
-
-          // Store TTS text on the real button
-          const ttsBtn = aiBubble.querySelector('.tts-btn');
-          if (ttsBtn) ttsBtn.setAttribute('data-text', encodeURIComponent(finalContent));
+          if (aiMessageId) {
+            setBubbleRealId(aiBubble, aiMessageId);
+            const segs = Array.isArray(data?.audio_segments) ? data.audio_segments : null;
+            if (segs && segs.length > 0) {
+              currentAudioSegments[aiMessageId] = segs;
+              const ttsBtn = aiBubble.querySelector('.tts-btn');
+              if (ttsBtn) {
+                // Stash segments sebagai JSON di attribute.
+                ttsBtn.setAttribute('data-segments', JSON.stringify(segs));
+                ttsBtn.setAttribute('data-text', encodeURIComponent(finalContent));
+                ttsBtn.title = `Dengarkan (${segs.length} segmen)`;
+              }
+            } else {
+              const ttsBtn = aiBubble.querySelector('.tts-btn');
+              if (ttsBtn) ttsBtn.setAttribute('data-text', encodeURIComponent(finalContent));
+            }
+          }
         }
       });
 
@@ -680,18 +990,22 @@ document.addEventListener('DOMContentLoaded', async () => {
       providerError = { message: err.message };
       updateBubbleContent(aiBubble, 'AI provider error: menunggu konfirmasi...', false);
       openAiErrorDialog(err.message || 'AI provider sedang tidak tersedia.');
-      // On network/unexpected error, keep bubbles for user decision instead of auto-reload
     } finally {
-      // Memory update in background
       setTimeout(async () => {
         try {
           const res = await api.get(`/stories/${storyId}`);
           const storyData = res.data?.story ?? res.data;
           const rawMem = storyData?.dynamic_memory;
           if (rawMem) {
-            let facts = typeof rawMem === 'string'
-              ? (JSON.parse(rawMem)?.facts ?? [])
-              : (rawMem.facts ?? []);
+            let parsed;
+            if (typeof rawMem === 'string') {
+              try { parsed = JSON.parse(rawMem); } catch { parsed = null; }
+            } else {
+              parsed = rawMem;
+            }
+            let facts = [];
+            if (Array.isArray(parsed)) facts = parsed;
+            else if (parsed && Array.isArray(parsed.facts)) facts = parsed.facts;
             factCountBadge.textContent = `${facts.length} fakta`;
           }
         } catch (e) { }
