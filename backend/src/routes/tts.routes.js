@@ -65,6 +65,10 @@ router.post('/', async (req, res, next) => {
     res.setHeader('X-Tts-Voice', voice);
     res.end(buffer);
   } catch (err) {
+    // HttpError (dari validateVoiceOrThrow dll) sudah membawa status yang
+    // benar — propagate langsung. Error lain dari Edge TTS upstream
+    // bungkus jadi 500 generic dengan ringkasan.
+    if (err.statusCode) return next(err);
     console.warn('[tts] Synthesize gagal:', err.message);
     next(new HttpError(500, `TTS synthesis gagal: ${err.message}`));
   }
