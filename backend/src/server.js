@@ -22,10 +22,24 @@ process.on('SIGTERM', () => shutdown('SIGTERM'));
 
 process.on('uncaughtException', (err) => {
   console.error('[server] uncaughtException:', err);
+  // EdgeTTS/sandbox-blocked 403: paket library melempar 'error' synchronously dari
+  // internal WebSocket constructor. Service sudah punya one-shot listener yang
+  // mengubah throw jadi Promise rejection untuk /api/tts handler. Jangan bunuh
+  // server hanya karena satu route gagal.
+  const msg = (err && (err.message ?? err.toString?.())) || '';
+  if (msg.includes('EdgeTTS') || msg.includes('Unexpected server response')) {
+    console.warn('[server] Non-fatal TTS transport error, process tetap hidup.');
+    return;
+  }
   process.exit(1);
 });
 
 process.on('unhandledRejection', (reason) => {
   console.error('[server] unhandledRejection:', reason);
+  const msg = (reason && (reason.message ?? reason.toString?.())) || '';
+  if (msg.includes('EdgeTTS') || msg.includes('Unexpected server response')) {
+    console.warn('[server] Non-fatal TTS rejection, process tetap hidup.');
+    return;
+  }
   process.exit(1);
 });
