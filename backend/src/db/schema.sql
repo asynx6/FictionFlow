@@ -60,3 +60,23 @@ CREATE TABLE IF NOT EXISTS voice_presets (
     gender_hint     TEXT CHECK(gender_hint IN ('male','female','neutral','other')),
     UNIQUE(story_id, tag_name)
 );
+
+-- Cache audio_segments per assistant message.
+-- Digunakan untuk replay TTS tanpa re-synthesize.
+-- segments_json = array of {index, text, gender, type, voice_config, url|null, synthesized}
+-- provider         = "azure" (semua synthesize), "browser" (semua fallback ke Web Speech),
+--                    "mixed" (sebagian azure, sebagian browser).
+CREATE TABLE IF NOT EXISTS message_tts (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    message_id      INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+    story_id        TEXT NOT NULL REFERENCES stories(id) ON DELETE CASCADE,
+    segments_json   TEXT NOT NULL,
+    provider        TEXT NOT NULL CHECK(provider IN ('azure','browser','mixed')),
+    synthesized_at  DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_message_tts_msg
+    ON message_tts(message_id);
+
+CREATE INDEX IF NOT EXISTS idx_message_tts_story
+    ON message_tts(story_id, synthesized_at DESC);

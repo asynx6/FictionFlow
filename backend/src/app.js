@@ -7,6 +7,7 @@ import express from 'express';
 import storiesRouter from './routes/stories.routes.js';
 import modelsRouter from './routes/models.routes.js';
 import generatorRouter from './routes/generator.routes.js';
+import ttsRouter from './routes/tts.routes.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const FRONTEND_PUBLIC = path.resolve(__dirname, '..', '..', 'frontend', 'public');
@@ -29,6 +30,7 @@ export function buildApp(expressLib = express) {
   app.use('/api/stories', storiesRouter);
   app.use('/api', modelsRouter);
   app.use('/api/generate', generatorRouter);
+  app.use('/api/tts', ttsRouter);
 
   app.use(expressLib.static(FRONTEND_PUBLIC, {
     extensions: ['html'],

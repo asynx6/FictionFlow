@@ -1,17 +1,89 @@
-/* Chat bubble fixes — loaded outside Tailwind so it cannot be purged */
+/* Chat bubble fixes — loaded outside Tailwind so it cannot be purged.
+   v4: rombak total — pakai !important pada poin-poin yang bentrok dengan
+   compiled Tailwind (.msg-user-block { display:flex; max-width:85% }).
+   Akar masalah: .msg-user-block adalah flex item di outer `<div class="flex w-full">`,
+   sehingga 'max-width: fit-content' TIDAK berlaku di flex item versi spec.
+   Fix: matikan flex dari .msg-user-block dan biarkan flow biasa agar shrink-wrap bekerja. */
 
 .msg-content {
   width: fit-content;
   max-width: 100%;
 }
 
-/* Ensure chat bubbles shrink to text width while keeping paragraphs block-level for multi-line messages */
-.msg-content p {
+/* AI story panels: tetap lebar untuk readability */
+.msg-ai-block {
+  display: flex !important;
+  flex-direction: row !important;
+  gap: 1rem !important;
+  align-items: flex-start !important;
+  max-width: 92% !important;
+  min-width: 0 !important;
+}
+@media (min-width: 640px) {
+  .msg-ai-block { max-width: 85% !important; }
+}
+@media (min-width: 768px) {
+  .msg-ai-block { max-width: 78% !important; }
+}
+.msg-ai-block .msg-content {
+  display: block !important;
+  width: 100% !important;
+  max-width: 100% !important;
+  min-width: 0 !important;
+}
+.msg-ai-block .msg-content p {
   display: block;
-  width: fit-content;
+  width: 100%;
   max-width: 100%;
   margin: 0 0 0.75em 0;
 }
-.msg-content p:last-child {
+.msg-ai-block .msg-content p:last-child {
   margin-bottom: 0;
+}
+
+/* USER bubble: keluar dari flex container di dalam `.flex.w-full.justify-end`
+   supaya anak bisa shrink-wrap ke ukuran teks. Reset display + width + max-width. */
+.msg-user-block {
+  display: block !important;
+  flex: 0 1 auto !important;
+  flex-direction: column !important;
+  align-items: flex-end !important;
+  width: auto !important;
+  min-width: 0 !important;
+  max-width: min(560px, 90vw) !important;
+}
+.msg-user-block .msg-content {
+  display: inline-block !important;
+  width: auto !important;
+  max-width: 100% !important;
+  min-width: 0 !important;
+  padding: 0.45rem 0.8rem !important;
+  line-height: 1.35 !important;
+  white-space: pre-wrap !important;
+  word-break: break-word !important;
+  overflow-wrap: break-word !important;
+}
+.msg-user-block .msg-content p {
+  display: block;
+  width: auto;
+  max-width: 100%;
+  margin: 0;
+}
+.msg-user-block .msg-content p + p {
+  margin-top: 0.35em;
+}
+.msg-user-block .msg-content p:last-child {
+  margin-bottom: 0;
+}
+.msg-user-block .msg-time {
+  display: block !important;
+  text-align: right !important;
+  width: 100% !important;
+  max-width: 100% !important;
+}
+
+/* Reading-scale: override .msg-ai-block .msg-content font-size from JS variable.
+   Specificity (0,2,1) > .msg-ai-block .msg-content (0,2,0) agar slider menang. */
+.msg-ai-block .msg-content.font-size-active {
+  font-size: var(--reading-font-size, 16px) !important;
 }

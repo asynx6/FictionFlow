@@ -14,10 +14,12 @@ export default {
           accent: 'rgb(var(--theme-accent) / <alpha-value>)',
           hover: 'rgb(var(--theme-hover) / <alpha-value>)',
           border: 'rgb(var(--theme-border) / <alpha-value>)',
+          surface: 'rgb(var(--theme-surface) / <alpha-value>)',
         }
       },
       fontFamily: {
-        sans: ['Inter', 'system-ui', 'sans-serif'],
+        sans: ['DM Sans', 'system-ui', 'sans-serif'],
+        serif: ['Crimson Pro', 'Georgia', 'serif'],
       }
     },
   },

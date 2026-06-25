@@ -102,6 +102,15 @@ FictionFlow/
 ├── docs/
 │   ├── FictionFlow.md          # Spesifikasi lengkap (Bab 1-17)
 │   └── task.md                 # Task tracker internal
+├── tests/                      # Regression / E2E scripts
+│   ├── fictionflow-chat.spec.js  # Playwright persistence E2E
+│   ├── test-chat-endpoint.mjs    # Manual endpoint probe
+│   ├── test-provider.mjs         # Model provider smoke
+│   └── test-story-stream.mjs     # SSE stream smoke
+├── scratch/                    # One-off scripts & debug snapshots (not production)
+│   ├── smoke.mjs               # End-to-end smoke (13/13 PASS)
+│   ├── visual-test.js          # Playwright visual screenshot harness
+│   └── test_*.ps1 / test_*.mjs # Misc helpers
 ├── backend/                    # Node.js + Express + SQLite
 │   ├── package.json
 │   ├── .env.example            # Template env (Copy-Item ke .env oleh run.ps1)

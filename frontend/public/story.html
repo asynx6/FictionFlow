@@ -3,25 +3,30 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-  <title>FictionFlow — Chat</title>
-  <link rel="stylesheet" href="/css/tailwind.output.css?v=2" />
+  <title>FictionFlow — Baca</title>
+  <link rel="stylesheet" href="/css/tailwind.output.css?v=4" />
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Crimson+Pro:ital,wght@0,400;0,500;0,600;0,700;1,400;1,500&family=DM+Sans:ital,wght@0,400;0,500;0,700;1,400&display=swap" rel="stylesheet">
   <link href="https://fonts.googleapis.com/icon?family=Material+Icons+Round" rel="stylesheet">
-  <link rel="stylesheet" href="/css/chat-fixes.css?v=2">
+  <link rel="stylesheet" href="/css/chat-fixes.css?v=4">
 </head>
 <body class="theme-bg theme-text h-[100dvh] flex flex-col font-sans transition-colors duration-300 antialiased overflow-hidden">
 
+  <!-- Reading Progress Bar -->
+  <div id="readingProgress" class="reading-progress">
+    <div class="reading-progress-bar" id="readingProgressBar"></div>
+  </div>
+
   <!-- Header -->
-  <header class="sticky top-0 z-40 border-b border-theme-border/50 glass-panel shadow-sm flex-shrink-0 transition-colors duration-300">
+  <header id="mainHeader" class="sticky top-[3px] z-40 border-b border-theme-border/50 glass-panel shadow-sm flex-shrink-0 transition-colors duration-300">
     <div class="max-w-4xl mx-auto px-3 sm:px-4 h-14 sm:h-16 flex items-center justify-between">
       <div class="flex items-center gap-2 sm:gap-3">
         <a href="/" class="p-2 -ml-2 rounded-full hover:bg-theme-hover transition-colors flex items-center text-theme-muted hover:text-theme-text" title="Kembali ke Dashboard" aria-label="Kembali ke Dashboard">
           <span class="material-icons-round">arrow_back</span>
         </a>
         <div class="flex items-center gap-2 sm:gap-3">
-          <div class="w-9 h-9 sm:w-10 sm:h-10 rounded-full bg-gradient-to-br from-theme-accent/20 to-theme-accent/5 border border-theme-accent/20 flex items-center justify-center text-theme-accent font-bold text-lg shadow-sm" id="headerAvatar">?</div>
+          <div class="w-9 h-9 sm:w-10 sm:h-10 rounded-full bg-gradient-to-br from-theme-accent/20 to-theme-accent/5 border border-theme-accent/20 flex items-center justify-center text-theme-accent font-serif font-bold text-lg shadow-sm" id="headerAvatar">?</div>
           <div class="flex flex-col min-w-0">
             <h1 class="text-sm sm:text-base font-bold leading-tight truncate max-w-[140px] sm:max-w-[240px]" id="headerAiName">Loading...</h1>
             <span class="text-[11px] sm:text-xs text-theme-muted mt-0.5 truncate max-w-[140px] sm:max-w-[240px]" id="headerContext">...</span>
@@ -40,10 +45,38 @@
     </div>
   </header>
 
+  <!-- Reading Toolbar -->
+  <div id="readingToolbar" class="reading-toolbar hidden">
+    <div class="max-w-4xl mx-auto px-3 sm:px-4 h-12 sm:h-14 flex items-center justify-between">
+      <div class="flex items-center gap-2">
+        <button id="exitReadingModeBtn" class="tool-btn" title="Keluar Mode Baca (Esc)" aria-label="Keluar Mode Baca">
+          <span class="material-icons-round text-[20px]">close</span>
+        </button>
+        <div class="h-5 w-px bg-theme-border/50 mx-1"></div>
+        <div class="flex items-center gap-1">
+          <button id="decreaseFontBtn" class="tool-btn text-sm font-serif" title="Perkecil Font" aria-label="Perkecil Font">A-</button>
+          <span id="fontSizeLabel" class="text-xs text-theme-muted min-w-[2.5rem] text-center font-mono">16px</span>
+          <button id="increaseFontBtn" class="tool-btn text-sm font-serif" title="Perbesar Font" aria-label="Perbesar Font">A+</button>
+        </div>
+      </div>
+      <div class="flex items-center gap-1">
+        <button id="toolbarTtsBtn" class="tool-btn" title="Dengarkan Pesan Terakhir" aria-label="Dengankan Pesan Terakhir">
+          <span class="material-icons-round text-[20px]">volume_up</span>
+        </button>
+        <button id="toolbarThemeBtn" class="tool-btn" title="Ganti Tema" aria-label="Ganti Tema">
+          <span class="material-icons-round text-[20px]" id="toolbarThemeIcon">dark_mode</span>
+        </button>
+        <button id="toolbarSettingsBtn" class="tool-btn" title="Pengaturan" aria-label="Pengaturan">
+          <span class="material-icons-round text-[20px]">tune</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
   <!-- AI Provider Error Dialog -->
   <div id="aiErrorDialog" class="fixed inset-0 z-[70] hidden flex items-start justify-center pt-24 sm:pt-28 px-4">
     <div class="absolute inset-0 bg-black/60 backdrop-blur-sm" id="aiErrorBackdrop"></div>
-    <div class="relative bg-theme-bg rounded-2xl border border-theme-border/50 shadow-2xl w-full max-w-md p-5 scale-95 opacity-0 transition-all duration-200" id="aiErrorPanel">
+    <div class="relative bg-theme-surface rounded-2xl border border-theme-border/50 shadow-2xl w-full max-w-md p-5 scale-95 opacity-0 transition-all duration-200" id="aiErrorPanel">
       <div class="flex items-start gap-3">
         <div class="p-2 rounded-full bg-red-500/10 text-red-500">
           <span class="material-icons-round">error_outline</span>
@@ -63,7 +96,7 @@
   <!-- Settings Panel -->
   <div id="settingsPanel" class="fixed inset-0 z-50 hidden">
     <div class="absolute inset-0 bg-black/50 backdrop-blur-sm transition-opacity" id="settingsBackdrop"></div>
-    <div class="absolute right-0 top-0 bottom-0 w-full max-w-sm bg-theme-bg border-l border-theme-border/50 shadow-2xl flex flex-col transform transition-transform translate-x-full" id="settingsDrawer">
+    <div class="absolute right-0 top-0 bottom-0 w-full max-w-sm bg-theme-surface border-l border-theme-border/50 shadow-2xl flex flex-col transform transition-transform translate-x-full" id="settingsDrawer">
       <div class="p-4 border-b border-theme-border/50 flex items-center justify-between">
         <h2 class="text-lg font-bold">Pengaturan Story</h2>
         <button id="closeSettingsBtn" class="p-2 rounded-full hover:bg-theme-hover transition-colors" aria-label="Tutup">
@@ -82,6 +115,32 @@
             <button id="viewMemoryBtn" class="w-full py-1.5 px-3 rounded-lg bg-theme-hover text-sm font-medium hover:bg-theme-accent hover:text-white transition-colors">
               Lihat Memory
             </button>
+          </div>
+        </div>
+        <div class="space-y-2">
+          <h3 class="text-xs font-bold uppercase tracking-wider text-theme-muted">Pengalaman Membaca</h3>
+          <div class="surface-panel rounded-xl p-4 space-y-4">
+            <div class="flex items-center justify-between">
+              <div>
+                <span class="text-sm font-semibold">Mode Baca Imersif</span>
+                <p class="text-[10px] text-theme-muted">Sembunyikan header &amp; footer, fokus pada teks.</p>
+              </div>
+              <label class="relative inline-flex items-center cursor-pointer">
+                <input type="checkbox" id="readingModeToggle" class="sr-only peer">
+                <div class="w-9 h-5 bg-theme-hover peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-theme-accent"></div>
+              </label>
+            </div>
+            <div class="space-y-2">
+              <div class="flex items-center justify-between">
+                <label class="text-xs font-medium text-theme-muted">Ukuran Teks</label>
+                <span id="settingsFontSizeLabel" class="text-xs font-mono text-theme-muted">16px</span>
+              </div>
+              <input type="range" id="fontSizeSlider" min="14" max="22" step="1" value="16" class="w-full accent-theme-accent h-1.5 bg-theme-hover rounded-lg appearance-none cursor-pointer">
+              <div class="flex justify-between text-[10px] text-theme-muted">
+                <span>A</span>
+                <span>A</span>
+              </div>
+            </div>
           </div>
         </div>
         <div class="space-y-2">
@@ -112,7 +171,7 @@
   <!-- Memory Modal -->
   <div id="memoryModal" class="fixed inset-0 z-[60] hidden flex items-center justify-center p-4">
     <div class="absolute inset-0 bg-black/60 backdrop-blur-sm" id="memoryBackdrop"></div>
-    <div class="relative bg-theme-bg rounded-2xl border border-theme-border/50 shadow-2xl w-full max-w-2xl max-h-[85vh] flex flex-col scale-95 opacity-0 transition-all duration-200" id="memoryDialog">
+    <div class="relative bg-theme-surface rounded-2xl border border-theme-border/50 shadow-2xl w-full max-w-2xl max-h-[85vh] flex flex-col scale-95 opacity-0 transition-all duration-200" id="memoryDialog">
       <div class="p-4 border-b border-theme-border/50 flex items-center justify-between">
         <h2 class="text-lg font-bold flex items-center gap-2">
           <span class="material-icons-round text-theme-accent">memory</span>
@@ -129,7 +188,7 @@
   </div>
 
   <!-- Chat History -->
-  <main class="flex-1 overflow-y-auto p-3 sm:p-6 scroll-smooth scrollbar-thin scrollbar-thumb-theme-hover scrollbar-track-transparent relative" id="chatContainer">
+  <main class="flex-1 overflow-y-auto p-3 sm:p-6 scroll-smooth scrollbar-thin scrollbar-thumb-theme-hover scrollbar-track-transparent relative bg-theme-bg" id="chatContainer">
     <div class="max-w-3xl mx-auto space-y-4 sm:space-y-6 pb-40" id="chatList">
       <div class="flex justify-center py-10" id="loadingChat">
         <span class="material-icons-round animate-spin text-theme-accent text-3xl">autorenew</span>
@@ -142,7 +201,7 @@
 
   <!-- Floating Chat Input Capsule -->
   <footer class="fixed bottom-0 left-0 w-full p-3 sm:p-5 pointer-events-none z-30 bg-gradient-to-t from-theme-bg via-theme-bg/90 to-transparent">
-    <div class="max-w-3xl mx-auto pointer-events-auto shadow-[0_12px_40px_rgba(0,0,0,0.16)] rounded-[2rem] sm:rounded-[2.25rem] bg-theme-bg/85 backdrop-blur-2xl border border-theme-border/50 transition-all duration-300">
+    <div class="max-w-3xl mx-auto pointer-events-auto shadow-[0_12px_40px_rgba(0,0,0,0.16)] rounded-[2rem] sm:rounded-[2.25rem] bg-theme-surface/85 backdrop-blur-2xl border border-theme-border/50 transition-all duration-300">
       <form id="chatForm" class="flex flex-col relative p-2 sm:p-2.5">
         <div class="flex items-center justify-between px-3 sm:px-4 pt-1.5 pb-2">
           <div class="flex items-center gap-2">
@@ -158,6 +217,11 @@
               <span class="material-icons-round text-[14px] animate-pulse">record_voice_over</span>
               <span>Berbicara</span>
             </div>
+          </div>
+          <div class="flex items-center gap-1">
+            <button type="button" id="readingModeFooterBtn" class="p-1.5 rounded-full text-theme-muted hover:text-theme-text hover:bg-theme-hover transition-colors" title="Mode Baca Imersif" aria-label="Mode Baca Imersif">
+              <span class="material-icons-round text-[18px]">fullscreen</span>
+            </button>
           </div>
         </div>
 
@@ -178,6 +242,6 @@
     </div>
   </footer>
 
-  <script type="module" src="/js/pages/story.page.js?v=2"></script>
+  <script type="module" src="/js/pages/story.page.js?v=3"></script>
 </body>
 </html>
