@@ -245,22 +245,6 @@ document.addEventListener('DOMContentLoaded', async () => {
           </article>
         `;
       }).join('');
-
-      document.querySelectorAll('[data-open]').forEach((el) => {
-        el.addEventListener('click', () => {
-          const id = el.getAttribute('data-open');
-          window.location.href = `/story.html?id=${id}`;
-        });
-      });
-
-      document.querySelectorAll('.delete-session-btn').forEach((btn) => {
-        btn.addEventListener('click', (e) => {
-          e.stopPropagation();
-          const id = btn.getAttribute('data-id');
-          const name = btn.getAttribute('data-name');
-          openDeleteModal(id, name);
-        });
-      });
     } catch (err) {
       console.error('Failed to load stories', err);
       storiesSkeleton.classList.add('hidden');
@@ -313,4 +297,23 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
 
   loadStories();
+
+  // Delegated click handler: avoids per-render listener accumulation when
+  // storiesList.innerHTML is reassigned in loadStories().
+  if (storiesList) {
+    storiesList.addEventListener('click', (e) => {
+      const opener = e.target.closest('[data-open]');
+      if (opener) {
+        const id = opener.getAttribute('data-open');
+        window.location.href = `/story.html?id=${id}`;
+        return;
+      }
+      const btn = e.target.closest('.delete-session-btn');
+      if (btn) {
+        const id = btn.getAttribute('data-id');
+        const name = btn.getAttribute('data-name');
+        openDeleteModal(id, name);
+      }
+    });
+  }
 });
