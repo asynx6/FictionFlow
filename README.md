@@ -1,14 +1,15 @@
 # FictionFlow
 
-> Platform interaktif roleplay novel berbasis AI. Single-user, self-hosted, hemat RAM. Hybrid TTS via Microsoft Edge TTS (`@lixen/edge-tts`, 2-pack `id-ID`/`en-US` × male/female = 4 Neural voices) + Web Speech API fallback (browser).
+> Platform interaktif roleplay novel berbasis AI. Single-user, self-hosted, hemat RAM. Hybrid TTS via Microsoft Edge TTS (`edge-tts-universal` v1.4.0, Chrome 143 + MUID cookie auth — migrasi dari `@lixen/edge-tts` yang 403 setelah token rotation Feb 2026), 2-pack `id-ID`/`en-US` × male/female = 4 Neural voices + prosody 4-tuple `(type × gender)` untuk naturalisasi narasi + Web Speech API fallback (browser).
 
 ## ✨ Fitur
 
 - 🎭 **Long-Term Memory** — AI tidak pernah lupa fakta inti cerita (nama, sifat, gaya bahasa, target ending)
 - 🧠 **Short-Term Memory** — Hanya N pertukaran terakhir yang dikirim ke AI, hemat token untuk cerita panjang
 - 🔄 **Two-Tier Memory Engine** — Sesuai spec di `docs/FictionFlow.md` Bab 6
-- 🎙️ **Hybrid Multi-Voice TTS** — Server-synthesize via `@lixen/edge-tts` (4 Neural voices: `id-ID-ArdiNeural`, `id-ID-GadisNeural`, `en-US-GuyNeural`, `en-US-JennyNeural`) + browser Web Speech fallback. 2 voice pack pilihan user di Story settings. Backend emit `audio_segments[]` JSON, frontend queue manager play/cancel/skip
+- 🎙️ **Hybrid Multi-Voice TTS** — Server-synthesize via `edge-tts-universal` v1.4.0 (4 Neural voices: `id-ID-ArdiNeural`, `id-ID-GadisNeural`, `en-US-GuyNeural`, `en-US-JennyNeural`) + browser Web Speech fallback. **Prosody 4-tuple** `(type × gender)` → dialog female `+8%/+3Hz`, dialog male `+5%/+2Hz`, narration female `-2%/+1Hz`, narration male `-3%/+0Hz` — variasi ekspresi natural tanpa V2 voice (Indonesian Neural cuma 2 varian: Ardi+Gadis, tidak ada cheerful/serious). 2 voice pack pilihan user di Story settings. Backend emit `audio_segments[]` JSON + `gender` whitelist resolver (lowercase English exact, fallback ke `story.ai_gender`, default male), frontend queue manager play/cancel/skip + B6 SPA-replay-safe cache lifecycle
 - 🛡️ **Crash-safe** — `process.once('uncaughtException')` race-pattern di service + filter di `server.js` agar 403 dari Microsoft endpoint tidak membunuh server
+- 🎯 **Gender fidelity** — Whitelist-based gender resolver di controller + tightened prompter rule (no `perempuan`/`wanita`/`laki`/`cewek` Indonesian coercion → silent-fallback male lama) + Story-Identity consultation rule untuk AI/User speaker. End-to-end: Luna character female → GadisNeural bukan ArdiNeural lagi
 - 📡 **Streaming Chat (SSE)** — Token demi token, tidak nunggu sampai selesai
 - 🔌 **Pluggable Model Provider** — OpenRouter / 9Router / OpenAI-compatible lain
 - 🗄️ **SQLite Lokal + Cache TTS** — Semua cerita dan riwayat tersimpan di `data/fictionflow.sqlite`; `message_tts` cache untuk replay segment
