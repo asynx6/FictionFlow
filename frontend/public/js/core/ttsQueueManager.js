@@ -1,5 +1,16 @@
 import { parseTaggedSegments, pickVoiceForPreset, loadBrowserVoices } from './ttsEngine.js';
 
+function resolveTtsVoice(segment) {
+  const hint = segment?.voice_config?.voice_name;
+  if (hint && typeof hint === 'string' && hint.trim()) return hint.trim();
+  if (segment?.gender === 'female') return 'id-ID-GadisNeural';
+  return 'id-ID-ArdiNeural';
+}
+
+function clamp(v, min, max) {
+  return Math.min(max, Math.max(min, Number(v) || 0));
+}
+
 /**
  * Antrian pemutaran TTS. Kontrol transport sesuai Bab 7.4.
  * Event yang di-emit: 'state', 'segment'.
