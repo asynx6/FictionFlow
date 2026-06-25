@@ -134,7 +134,7 @@ async function callExtractor({ model, existingFacts, userMessage, assistantMessa
   try {
     return sanitizeFacts(JSON.parse(cleaned));
   } catch (err) {
-    console.warn('[memoryExtractor] Gagal parse JSON dari LLM:', err.message);
+    console.error('[memoryExtractor] stage=parse model=' + model + ' err=' + err.message);
     return [];
   }
 }
@@ -168,6 +168,6 @@ export async function extractAndMergeFacts({ story, userMessage, assistantMessag
     const merged = mergeFacts(existingFacts, extracted);
     updateMemoryStmt.run(JSON.stringify(merged), story.id);
   } catch (err) {
-    console.warn('[memoryExtractor] Skip —', err.message);
+    console.error('[memoryExtractor] stage=merge story=' + story.id + ' model=' + model + ' err=' + (err && err.message ? err.message : err));
   }
 }
