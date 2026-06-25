@@ -135,47 +135,7 @@ export class TtsQueueManager {
   }
 
   _speakCurrent() {
-    if (!this.playing) return;
-    if (this.index >= this.segments.length) {
-      this._finish();
-      return;
-    }
-    const segment = this.segments[this.index];
-    const preset = this.resolvePresetForTag(segment.tag);
-    const voice = preset ? pickVoiceForPreset(preset, this.voices) : this.voices[0];
-
-    const utter = new SpeechSynthesisUtterance(segment.text);
-    if (voice) utter.voice = voice;
-    if (preset) {
-      utter.pitch = clamp(preset.pitch ?? 1.0, 0, 2);
-      utter.rate = clamp(preset.rate ?? 1.0, 0.1, 10);
-    }
-    utter.lang = voice?.lang ?? 'id-ID';
-
-    this.currentUtterance = utter;
-    this.highlightCurrentSegment();
-    this.emit('segment', { index: this.index, segment });
-
-    utter.onend = () => {
-      this.clearHighlight();
-      this.index += 1;
-      if (this.index >= this.segments.length) {
-        this._finish();
-        return;
-      }
-      if (this.playing) this._speakCurrent();
-    };
-    utter.onerror = () => {
-      this.clearHighlight();
-      this.index += 1;
-      if (this.playing) this._speakCurrent();
-    };
-
-    try {
-      window.speechSynthesis.speak(utter);
-    } catch {
-      this._finish();
-    }
+    // Implementation dipindah ke hybrid playback di Task 5.
   }
 
   pause() {
