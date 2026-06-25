@@ -5,6 +5,13 @@ import { chatCompletionOnce } from '../services/modelProvider.service.js';
 
 const router = Router();
 
+// Mirror dengan MAX_MESSAGE_CONTENT di messages.routes.js. Generator
+// cukup 2000 chars karena input user = ide konsep singkat, bukan teks
+// panjang. Mencegah user mengirim beberapa MB ke upstream LLM yang
+// bisa memicu 413/500 atau menghitamkan log provider dengan error
+// generic.
+const MAX_GENERATOR_PROMPT = 2000;
+
 const GENERATOR_PROMPT = `Kamu adalah generator karakter roleplay untuk aplikasi FictionFlow.
 User akan memberikan satu prompt singkat berisi ide atau konsep karakter.
 Tugasmu: ubah prompt itu menjadi JSON dengan field-field di bawah.
@@ -63,6 +70,14 @@ router.post('/character', async (req, res, next) => {
   const prompt = (req.body?.prompt ?? '').toString().trim();
   if (!prompt) {
     return next(new HttpError(400, 'Prompt tidak boleh kosong.'));
+  }
+  if (prompt.length > MAX_GENERATOR_PROMPT) {
+    return next(
+      new HttpError(
+        413,
+        `Prompt melebihi ${MAX_GENERATOR_PROMPT} karakter. Sederhanakan dulu ide karakternya.`
+      )
+    );
   }
 
   if (!env.MODEL_PROVIDER_API_KEY) {
