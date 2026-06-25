@@ -10,6 +10,12 @@ export const EventBus = {
     if (!this.events[event]) this.events[event] = [];
     this.events[event].push(listener);
   },
+  off(event, listener) {
+    const list = this.events[event];
+    if (!list) return;
+    const i = list.indexOf(listener);
+    if (i >= 0) list.splice(i, 1);
+  },
   emit(event, data) {
     if (this.events[event]) {
       this.events[event].forEach(l => l(data));
