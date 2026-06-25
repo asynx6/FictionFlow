@@ -24,15 +24,18 @@ function pickVoiceForSegment(segment) {
 }
 
 async function runSynthesize(text, voice, options) {
-  // @lixen/edge-tts punya celah: saat WebSocket emit 'error' (mis. 403 dari Microsoft),
-  // Promise `synthesize()` tidak reject sehingga error naik sebagai uncaughtException
-  // dan membunuh proses server. Kita pasang interceptor one-shot supaya error jadi
-  // Promise rejection yang tertangkap `try/catch` di route. Hanya listener spesifik
-  // yang dilepas supaya handler global (server.js) tidak ikut terhapus.
+  // @lixen/edge-tts hanya listen `ws.on('close', resolve)`. Saat endpoint Microsoft
+  // menutup socket dengan HTTP 403 (network/IP diblok), event 'error' naik tanpa
+  // listener → uncaughtException → server.js process.exit(1) → backend restart.
+  //
+  // Mitigasi: pasang one-shot listener spesifik yang mengubah throw jadi
+  // Promise rejection → route handler bisa mengembalikan HTTP 502 alih-alih
+  // crash. Listener selalu dihapus (named-reference removal) di finally agar
+  // handler global server.js tetap utuh untuk error non-TTS.
   let onError;
   const ttsError = new Promise((_, reject) => {
     onError = (err) => {
-      reject(new Error(`EdgeTTS WebSocket error: ${err?.message ?? err}`));
+      reject(new Error(`EdgeTTS WebSocket error: ${err && err.message ? err.message : err}`));
     };
     process.once('uncaughtException', onError);
   });
