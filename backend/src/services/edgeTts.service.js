@@ -25,6 +25,24 @@ export const DEFAULT_VOICE_FEMALE_EN = 'en-US-JennyNeural';
 export const VALID_PACKS = new Set(['id-ID', 'en-US']);
 
 /**
+ * Per-(type, gender) prosody bias untuk simulasi ekspresi natural.
+ * Narasi male lebih lambat+pitch netral (gravitas).
+ * Narasi female sedikit lebih cepat+pitch naik (orang/halo).
+ * Dialog male lebih cepat dan pitch sedikit naik seperti Azan biasa.
+ * Dialog female paling ekspresif (ramai/brightness).
+ * Semua nilai signed (+/-) sesuai regex edge-tts-universal.
+ */
+export function prosodyFor(type, gender) {
+  const t = type === 'dialogue' ? 'dialogue' : 'narration';
+  const g = gender === 'female' ? 'female' : 'male';
+  // 4-tuple matrix.
+  if (t === 'dialogue' && g === 'female') return { rate: '+8%', volume: '+0%', pitch: '+3Hz' };
+  if (t === 'dialogue' && g === 'male') return { rate: '+5%', volume: '+0%', pitch: '+2Hz' };
+  if (t === 'narration' && g === 'female') return { rate: '-2%', volume: '+0%', pitch: '+1Hz' };
+  return { rate: '-3%', volume: '+0%', pitch: '+0Hz' }; // narration male
+}
+
+/**
  * Strip suffix non-Neural (-Male / -Female / -M / -F) yang kadang muncul di
  * hint LLM lama agar tidak error di EdgeTTS endpoint. Mis.
  *   id-ID-Ardi-Male   → id-ID-ArdiNeural
@@ -128,20 +146,25 @@ export async function synthesizeSegment(segment) {
   }
   const voice = normalizeHint(segment?.voice_config?.voice_name)
     ?? pickVoiceForSegment(segment);
+  const pro = prosodyFor(segment?.type, segment?.gender);
 
-  // Default prosody: neutral (+0% / +0Hz). Catatan: edge-tts-universal regex
-  // `^[+-]\d+(%|Hz)$` REQUIRE explicit sign — bare '0%' reject. Backend tidak
-  // tweak prosody — biarkan Neural voice natural. Kalau nanti perlu ekspresi
-  // ("friendly", "excited") pakai SSML wrapper, bukan prosody tweak.
+  // Per-segment prosody: vary rate/pitch per (type, gender) supaya narasi tidak
+  // terdengar robotik / monotone. Indonesian Neural voices hanya punya 2 varian
+  // (Ardi male / Gadis female, tidak ada V2 cheerful/serious), jadi variasi
+  // ekspresi harus datang dari prosody. Semua nilai signed (+/-) — regex
+  // edge-tts-universal `^[+-]\d+(%|Hz)$` reject bare '0%' / '0Hz'.
   return runSynthesize(text, voice, {
-    rate: '+0%',
-    volume: '+0%',
-    pitch: '+0Hz',
+    rate: pro.rate,
+    volume: pro.volume,
+    pitch: pro.pitch,
   });
 }
 
 /**
  * Synthesize teks mentah dengan voice eksplisit.
+ * Legacy "raw text → MP3" helper untuk caller yang tidak punya segment
+ * type/gender (mis. router `/api/tts` request ad-hoc). Tetap pakai prosody
+ * neutral karena tidak ada konteks segment untuk menentukan bias ekspresi.
  * @param {string} text
  * @param {string} voice
  * @returns {Promise<Buffer>}
