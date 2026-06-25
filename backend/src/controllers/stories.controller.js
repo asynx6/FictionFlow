@@ -73,6 +73,16 @@ const STORY_EDITABLE = [
   'short_term_window',
 ];
 
+const STORY_FIELD_MAX_LENGTH = {
+  title: 200,
+  user_name: 80,
+  user_persona: 1000,
+  ai_name: 80,
+  ai_personality: 500,
+  language_style: 80,
+  target_ending: 1000,
+};
+
 function clampWindow(value) {
   const n = Number.parseInt(value ?? '', 10);
   if (Number.isNaN(n)) return env.DEFAULT_SHORT_TERM_WINDOW;
@@ -98,6 +108,21 @@ function validateCreatePayload(body) {
 
 export function createStory(req, res) {
   validateCreatePayload(req.body);
+  const createRaw = {
+    title: req.body.title?.toString(),
+    user_name: req.body.user_name?.toString(),
+    user_persona: req.body.user_persona?.toString(),
+    ai_name: req.body.ai_name?.toString(),
+    ai_personality: req.body.ai_personality?.toString(),
+    target_ending: req.body.target_ending?.toString(),
+  };
+  for (const [key, raw] of Object.entries(createRaw)) {
+    if (raw === undefined) continue;
+    const cap = STORY_FIELD_MAX_LENGTH[key];
+    if (raw.length > cap) {
+      throw new HttpError(413, `Field "${key}" melebihi panjang maksimum (${cap} karakter).`);
+    }
+  }
   const id = randomUUID();
   const aiName = req.body.ai_name.trim();
   const aiGender = normalizeAiGender(req.body.ai_gender);
@@ -178,6 +203,18 @@ export function updateStory(req, res) {
   }
   if (provided.short_term_window !== undefined) {
     provided.short_term_window = clampWindow(provided.short_term_window);
+  }
+
+  for (const [key, raw] of Object.entries(provided)) {
+    if (key === 'short_term_window' || key === 'ai_gender' || key === 'user_gender') continue;
+    if (typeof raw !== 'string') {
+      throw new HttpError(400, `Field "${key}" harus berupa string.`);
+    }
+    const cap = STORY_FIELD_MAX_LENGTH[key];
+    if (cap && raw.length > cap) {
+      throw new HttpError(413, `Field "${key}" melebihi panjang maksimum (${cap} karakter).`);
+    }
+    provided[key] = raw.trim();
   }
 
   const built = buildUpdate({ id: req.params.id, ...provided });
