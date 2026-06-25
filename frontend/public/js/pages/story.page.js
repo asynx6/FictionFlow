@@ -289,6 +289,24 @@ document.addEventListener('DOMContentLoaded', async () => {
   let pendingError = null;
   let pendingUserBubble = null;
   let pendingAiBubble = null;
+  // Single-slot refs for AI error dialog handlers — menghindari listener accumulation.
+  let _onContinueError = null;
+  let _onCancelError = null;
+
+  function _setAiErrorHandlers({ onContinue, onCancel }) {
+    _onContinueError = onContinue;
+    _onCancelError = onCancel;
+    if (continueErrorBtn) continueErrorBtn.onclick = () => { if (_onContinueError) _onContinueError(); };
+    if (cancelErrorBtn) cancelErrorBtn.onclick = () => { if (_onCancelError) _onCancelError(); };
+  }
+
+  function _clearAiErrorHandlers() {
+    _onContinueError = null;
+    _onCancelError = null;
+    if (continueErrorBtn) continueErrorBtn.onclick = null;
+    if (cancelErrorBtn) cancelErrorBtn.onclick = null;
+  }
+
   let readingMode = false;
   let fontSize = FONT_SIZE_DEFAULT;
 
@@ -440,6 +458,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   };
 
   const closeAiErrorDialog = () => {
+    _clearAiErrorHandlers();
     aiErrorPanel.classList.remove('scale-100', 'opacity-100');
     aiErrorPanel.classList.add('scale-95', 'opacity-0');
     setTimeout(() => {
@@ -918,13 +937,13 @@ document.addEventListener('DOMContentLoaded', async () => {
       finishSend();
     };
 
-    continueErrorBtn.addEventListener('click', onContinue, { once: true });
-    cancelErrorBtn.addEventListener('click', onCancel, { once: true });
+    _setAiErrorHandlers({ onContinue, onCancel });
 
     pendingUserBubble = userBubble;
     pendingAiBubble = aiBubble;
 
     const finishSend = () => {
+      _clearAiErrorHandlers();
       isAiResponding = false;
       typingIndicator.classList.add('hidden');
       typingIndicator.classList.remove('flex');
@@ -991,6 +1010,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       updateBubbleContent(aiBubble, 'AI provider error: menunggu konfirmasi...', false);
       openAiErrorDialog(err.message || 'AI provider sedang tidak tersedia.');
     } finally {
+      _clearAiErrorHandlers();
       setTimeout(async () => {
         try {
           const res = await api.get(`/stories/${storyId}`);
