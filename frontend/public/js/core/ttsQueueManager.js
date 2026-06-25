@@ -194,6 +194,13 @@ export class TtsQueueManager {
           console.warn('[tts-queue] Fetch gagal:', err.message);
           fallbackAndAdvance();
         });
+    }).catch((err) => {
+      // Module import gagal (offline / 404) → fallback Web Speech langsung.
+      clearTimeout(this._currentTimeoutId);
+      this._currentTimeoutId = null;
+      this._activeAbort = null;
+      console.warn('[tts-queue] apiClient import gagal:', err.message);
+      fallbackAndAdvance();
     });
   }
 
@@ -217,6 +224,9 @@ export class TtsQueueManager {
 
     audio.play().catch((err) => {
       console.warn('[tts-queue] audio.play() rejected:', err.message);
+      // Detach handlers biar onended/onerror tidak double-trigger fallbackAndAdvance.
+      audio.onended = null;
+      audio.onerror = null;
       this._disposeCurrent();
       fallbackAndAdvance();
     });
@@ -272,23 +282,53 @@ export class TtsQueueManager {
   pause() {
     if (!this.playing) return;
     this.paused = true;
-    this.playing = false;
-    try { window.speechSynthesis.pause(); } catch { /* fallback handled in resume */ }
+    // Pause audio element kalau sudah播放 segment.
+    if (this._currentAudioEl) {
+      try {
+        this._currentAudioEl.pause();
+      } catch { /* ignore */ }
+    }
+    // Clear timeout agar tidak auto-abort saat paused.
+    if (this._currentTimeoutId) {
+      clearTimeout(this._currentTimeoutId);
+      this._currentTimeoutId = null;
+    }
+    // Pause fallback Web Speech kalau ada.
+    try {
+      window.speechSynthesis.pause();
+    } catch { /* ignore */ }
     this.emit('state', this.snapshot());
   }
 
   resume() {
     if (!this.paused) return;
     this.paused = false;
-    this.playing = true;
-    try { window.speechSynthesis.resume(); } catch { /* ignore */ }
+    if (this._currentAudioEl) {
+      this._currentAudioEl.play().catch(() => {
+        // Resume gagal → fallback web speech untuk segmen yang sedang berjalan.
+        const seg = this.segments[this.index];
+        if (seg) this._speakFallbackBrowser(seg, () => {
+          this.index += 1;
+          if (this.playing) this._speakCurrent();
+        });
+      });
+      this.emit('state', this.snapshot());
+      return;
+    }
+    // Belum ada audio (mungkin masih loading atau sedang di Web Speech fallback).
+    try {
+      window.speechSynthesis.resume();
+    } catch { /* ignore */ }
     this.emit('state', this.snapshot());
   }
 
   stop() {
     this.playing = false;
     this.paused = false;
-    try { window.speechSynthesis.cancel(); } catch { /* ignore */ }
+    this._disposeCurrent();
+    try {
+      window.speechSynthesis.cancel();
+    } catch { /* ignore */ }
     this.clearHighlight();
     this.index = 0;
     this.emit('state', this.snapshot());
@@ -296,7 +336,18 @@ export class TtsQueueManager {
 
   skipToNext() {
     if (!this.playing && !this.paused) return;
-    try { window.speechSynthesis.cancel(); } catch { /* ignore */ }
+    this._disposeCurrent();
+    try {
+      window.speechSynthesis.cancel();
+    } catch { /* ignore */ }
+    this.clearHighlight();
+    this.index += 1;
+    if (this.index >= this.segments.length) {
+      this._finish();
+      return;
+    }
+    if (this.playing) this._speakCurrent();
+    else this.emit('state', this.snapshot());
   }
 
   _finish() {
