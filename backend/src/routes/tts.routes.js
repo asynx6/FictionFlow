@@ -24,6 +24,26 @@ function resolveVoice(body) {
   return DEFAULT_VOICE_MALE;
 }
 
+// Voice allowlist per 2-pack hybrid TTS spec (Phase-2.4 deferred → promoted
+// after audit). Voice di luar whitelist ditolak 400 agar upstream EdgeTTS
+// tidak terima string sembarang (mencegah log spam 500 untuk typo atau
+// probing). 4 suara: 2 Indonesian + 2 English US.
+const ALLOWED_VOICES = new Set([
+  DEFAULT_VOICE_MALE,
+  DEFAULT_VOICE_FEMALE,
+  'en-US-GuyNeural',
+  'en-US-JennyNeural',
+]);
+
+function validateVoiceOrThrow(voice) {
+  if (!ALLOWED_VOICES.has(voice)) {
+    throw new HttpError(
+      400,
+      `Voice "${voice}" tidak dikenal. Pilih salah satu dari allowlist.`
+    );
+  }
+}
+
 router.post('/', async (req, res, next) => {
   try {
     const text = (req.body?.text ?? '').toString().trim();
@@ -35,6 +55,7 @@ router.post('/', async (req, res, next) => {
     }
 
     const voice = resolveVoice(req.body);
+    validateVoiceOrThrow(voice);
 
     const buffer = await synthesizeText(text, voice);
 
