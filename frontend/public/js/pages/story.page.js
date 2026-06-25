@@ -292,6 +292,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Single-slot refs for AI error dialog handlers — menghindari listener accumulation.
   let _onContinueError = null;
   let _onCancelError = null;
+  let _factPollTimerId = null;
 
   function _setAiErrorHandlers({ onContinue, onCancel }) {
     _onContinueError = onContinue;
@@ -1011,7 +1012,9 @@ document.addEventListener('DOMContentLoaded', async () => {
       openAiErrorDialog(err.message || 'AI provider sedang tidak tersedia.');
     } finally {
       _clearAiErrorHandlers();
-      setTimeout(async () => {
+      if (_factPollTimerId !== null) clearTimeout(_factPollTimerId);
+      _factPollTimerId = setTimeout(async () => {
+        _factPollTimerId = null;
         try {
           const res = await api.get(`/stories/${storyId}`);
           const storyData = res.data?.story ?? res.data;
@@ -1036,4 +1039,11 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Init
   initTTS();
   loadStoryAndMessages();
+
+  window.addEventListener('pagehide', () => {
+    if (_factPollTimerId !== null) {
+      clearTimeout(_factPollTimerId);
+      _factPollTimerId = null;
+    }
+  }, { once: true });
 });
