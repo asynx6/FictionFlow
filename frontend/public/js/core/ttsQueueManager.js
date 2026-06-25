@@ -27,6 +27,12 @@ export class TtsQueueManager {
     this.currentUtterance = null;
     this.currentSegmentEl = null;
     this.langFilter = null;
+    // Hybrid playback internal state.
+    this._currentAudioEl = null;
+    this._currentBlobUrl = null;
+    this._activeAbort = null;
+    this._currentTimeoutId = null;
+    this._fetchTimeoutMs = 8000;
   }
 
   subscribe(fn) {
