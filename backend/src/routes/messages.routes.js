@@ -28,6 +28,19 @@ const insertMessageStmt = db.prepare(`
   VALUES (?, ?, ?, ?)
 `);
 
+// TTS cache read untuk replay. Lookup by message_id + validasi milik story
+// yang sama (jangan bocor antar-story atau antar-user kalau multi-user
+// nanti). Kalau tidak ada → 404 agar frontend tahu synthesize fresh.
+const getMessageTtsStmt = db.prepare(`
+  SELECT segments_json, provider, synthesized_at
+  FROM message_tts
+  WHERE message_id = ? AND story_id = ?
+`);
+
+const getMessageOwnerStmt = db.prepare(`
+  SELECT id FROM messages WHERE id = ? AND story_id = ?
+`);
+
 const MAX_MESSAGE_CONTENT = 20000;
 
 function requireStory(req, _res, next) {
@@ -108,6 +121,36 @@ router.post('/fallback', async (req, res, next) => {
   } catch (err) {
     next(err);
   }
+});
+
+router.get('/:messageId/tts-cache', (req, res, next) => {
+  const messageId = Number.parseInt(req.params.messageId, 10);
+  if (!Number.isInteger(messageId) || messageId <= 0) {
+    return next(new HttpError(400, 'messageId tidak valid.'));
+  }
+  // Verify message belongs to this story — cegah cross-story cache leak.
+  if (!getMessageOwnerStmt.get(messageId, req.story.id)) {
+    return next(new HttpError(404, 'Message tidak ditemukan di story ini.'));
+  }
+  const row = getMessageTtsStmt.get(messageId, req.story.id);
+  if (!row) return next(new HttpError(404, 'TTS cache belum tersedia untuk message ini.'));
+  let segments;
+  try {
+    segments = JSON.parse(row.segments_json);
+  } catch (err) {
+    console.warn('[messages] corrupt tts_cache JSON:', err.message);
+    return next(new HttpError(500, 'TTS cache rusak, perlu synthesize ulang.'));
+  }
+  res.json({
+    success: true,
+    data: {
+      segments,
+      provider: row.provider,
+      synthesized_at: row.synthesized_at,
+    },
+    message: 'OK',
+    meta: { timestamp: new Date().toISOString() },
+  });
 });
 
 export default router;

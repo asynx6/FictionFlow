@@ -30,6 +30,35 @@ const insertMessageStmt = db.prepare(`
   VALUES (?, ?, ?, ?)
 `);
 
+// TTS cache write per assistant message (replay-safe). Provider diset 'azure'
+// kalau semua segment server-synthesized (Neural), 'browser' kalau semua
+// fallback (non-Neural), 'mixed' kalau kombinasi.
+// message_tts.message_id tidak punya UNIQUE constraint (cuma INDEX), jadi
+// upsert pakai transaction delete+insert idempotent — toleran untuk resend/
+// upstream retry tanpa menambah migration invasive.
+const deleteMessageTtsStmt = db.prepare(`
+  DELETE FROM message_tts WHERE message_id = ?
+`);
+const insertMessageTtsStmt = db.prepare(`
+  INSERT INTO message_tts (message_id, story_id, segments_json, provider)
+  VALUES (?, ?, ?, ?)
+`);
+function upsertMessageTts(messageId, storyId, segmentsJson, provider) {
+  const tx = db.transaction(() => {
+    deleteMessageTtsStmt.run(messageId);
+    insertMessageTtsStmt.run(messageId, storyId, segmentsJson, provider);
+  });
+  tx();
+}
+
+function classifyProvider(segments) {
+  if (!Array.isArray(segments) || segments.length === 0) return 'azure';
+  const hasAzure = segments.some((s) => s?.voice_config?.voice_name?.endsWith('Neural'));
+  const hasBrowser = segments.some((s) => !s?.voice_config?.voice_name?.endsWith('Neural'));
+  if (hasAzure && hasBrowser) return 'mixed';
+  return hasBrowser ? 'browser' : 'azure';
+}
+
 function sendSse(res, event, data) {
   res.write(`event: ${event}\n`);
   res.write(`data: ${JSON.stringify(data)}\n\n`);
@@ -307,6 +336,20 @@ export async function streamChat({
     voice_config: seg.voice_config,
   }));
 
+  // TTS cache write (replay-safe). Transaction delete+insert untuk
+  // toleran retry tanpa UNIQUE constraint di schema.
+  try {
+    upsertMessageTts(
+      assistantMessageId,
+      story.id,
+      JSON.stringify(ttsEntries),
+      classifyProvider(ttsEntries)
+    );
+  } catch (err) {
+    // Cache failure tidak boleh block SSE done — log dan lanjut.
+    console.warn('[messages] message_tts cache write failed:', err.message);
+  }
+
   sendSse(res, 'done', {
     message_id: assistantMessageId,
     full_content: fullStoryText,
@@ -347,6 +390,18 @@ export async function generateFallbackMessage({ req, res, story, userContent, er
     type: seg.type,
     voice_config: seg.voice_config,
   }));
+
+  // TTS cache write (idempotent untuk fallback path juga)
+  try {
+    upsertMessageTts(
+      assistantMessageId,
+      story.id,
+      JSON.stringify(ttsEntries),
+      classifyProvider(ttsEntries)
+    );
+  } catch (err) {
+    console.warn('[messages] message_tts cache write failed:', err.message);
+  }
 
   res.json({
     success: true,
