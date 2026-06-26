@@ -1,6 +1,8 @@
 export const Events = {
   THEME_CHANGED: 'THEME_CHANGED',
   TTS_START: 'TTS_START',
+  TTS_LOADING: 'TTS_LOADING', // fetch /api/tts in flight
+  TTS_PLAYING: 'TTS_PLAYING', // audio element started playing
   TTS_END: 'TTS_END'
 };
 

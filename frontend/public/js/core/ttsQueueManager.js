@@ -23,7 +23,13 @@ function getActivePack() {
 }
 
 function resolveTtsVoice(segment) {
-  return edgeVoiceForPack(getActivePack(), segment?.gender);
+  // Caller passes explicit voice via segment.voice (currentStory.tts_voice).
+  // Fallback ke default Indonesian male kalau tidak ada — supaya legacy tests
+  // yang kirim {text, gender} saja tidak crash.
+  if (segment && typeof segment.voice === 'string' && segment.voice.trim()) {
+    return segment.voice.trim();
+  }
+  return 'id-ID-ArdiNeural';
 }
 
 function clamp(v, min, max) {
@@ -60,7 +66,9 @@ export class TtsQueueManager {
     this._currentBlobUrl = null;
     this._activeAbort = null;
     this._currentTimeoutId = null;
-    this._fetchTimeoutMs = 8000;
+    // Fetch timeout 25s — handle Edge TTS cold-start first hit (~10-20s).
+    // Subsequent hits = cache hit < 50ms (server-side LRU).
+    this._fetchTimeoutMs = 25000;
   }
 
   subscribe(fn) {
@@ -176,69 +184,107 @@ export class TtsQueueManager {
     // Cleanup state sebelumnya (jangan leak Blob URL antar segment).
     this._disposeCurrent();
 
-    const controller = new AbortController();
-    this._activeAbort = controller;
+    // Client-side retry untuk transient failures (HTTP 500/503/timeout).
+    // Backend sudah retry 3x di runWithRetry, but defense-in-depth: kalau
+    // backend edge TTS gagal semua attempt, client masih bisa retry habis
+    // warmup berikutnya.
+    const trySynthesize = (attempt) => {
+      if (attempt > 2) {
+        console.warn('[tts-queue] 2 retries exhausted.');
+        window.dispatchEvent(new CustomEvent('tts:playback-failed', {
+          detail: { message: 'Audio gagal dimuat setelah retry. Coba lagi.' },
+        }));
+        this._finish();
+        return;
+      }
+      // Per-attempt fresh abort controller + timeout.
+      const controller = new AbortController();
+      this._activeAbort = controller;
+      this._currentTimeoutId = setTimeout(() => {
+        controller.abort();
+      }, this._fetchTimeoutMs);
 
-    // Timeout fetch 8s; abort kalau masih loading setelah itu.
-    this._currentTimeoutId = setTimeout(() => {
-      controller.abort();
-    }, this._fetchTimeoutMs);
-
-    const segmentForFallback = segment;
-    const fallbackAndAdvance = () => {
-      this._speakFallbackBrowser(segmentForFallback, () => {
-        this.clearHighlight();
-        this.index += 1;
-        if (this.playing) this._speakCurrent();
+      import('../api/apiClient.js').then(({ apiClient }) => {
+        apiClient
+          .synthesizeTts({
+            text: segment.text,
+            voice: resolveTtsVoice(segment),
+            gender: segment.gender,
+            signal: controller.signal,
+          })
+          .then((blob) => {
+            clearTimeout(this._currentTimeoutId);
+            this._currentTimeoutId = null;
+            this._activeAbort = null;
+            if (!this.playing || this.index >= this.segments.length) return;
+            this._playBlob(blob, segment);
+          })
+          .catch((err) => {
+            clearTimeout(this._currentTimeoutId);
+            this._currentTimeoutId = null;
+            this._activeAbort = null;
+            if (err?.name === 'AbortError') return;
+            const isRetryable =
+              err.status === 500 || err.status === 503 ||
+              err.message?.includes('timeout') ||
+              err.message?.includes('EdgeTTS');
+            console.warn(`[tts-queue] Fetch gagal (attempt ${attempt + 1}/3):`, err.message);
+            if (isRetryable && attempt < 2) {
+              // Backoff: ~500ms / ~1.2s.
+              const delay = 500 + attempt * 700;
+              setTimeout(() => {
+                if (this.playing && this.index < this.segments.length) {
+                  // Reset abort controller for fresh attempt.
+                  trySynthesize(attempt + 1);
+                }
+              }, delay);
+              return;
+            }
+            // Non-retryable or out of attempts.
+            window.dispatchEvent(new CustomEvent('tts:playback-failed', {
+              detail: { message: err.message },
+            }));
+            this._finish();
+          });
+      }).catch((err) => {
+        console.warn('[tts-queue] apiClient import gagal:', err.message);
+        this._finish();
       });
     };
-
-    import('../api/apiClient.js').then(({ apiClient }) => {
-      apiClient
-        .synthesizeTts({
-          text: segment.text,
-          voice: resolveTtsVoice(segment),
-          gender: segment.gender,
-          signal: controller.signal,
-        })
-        .then((blob) => {
-          clearTimeout(this._currentTimeoutId);
-          this._currentTimeoutId = null;
-          this._activeAbort = null;
-          if (!this.playing || this.index >= this.segments.length) {
-            // Mungkin di-stop saat loading.
-            return;
-          }
-          this._playBlob(blob, segmentForFallback, fallbackAndAdvance);
-        })
-        .catch((err) => {
-          clearTimeout(this._currentTimeoutId);
-          this._currentTimeoutId = null;
-          this._activeAbort = null;
-          if (err?.name === 'AbortError') {
-            // User stop: diam saja, no fallback.
-            return;
-          }
-          console.warn('[tts-queue] Fetch gagal:', err.message);
-          fallbackAndAdvance();
-        });
-    }).catch((err) => {
-      // Module import gagal (offline / 404) → fallback Web Speech langsung.
-      clearTimeout(this._currentTimeoutId);
-      this._currentTimeoutId = null;
-      this._activeAbort = null;
-      console.warn('[tts-queue] apiClient import gagal:', err.message);
-      fallbackAndAdvance();
-    });
+    trySynthesize(0);
   }
 
-  _playBlob(blob, segmentForFallback, fallbackAndAdvance) {
+  _playBlob(blob, segment) {
+    // Empty / corrupt MP3 check. Backend kadang return tiny response (error
+    // body atau upstream failure). Jangan retry — itu sama saja dengan
+    // looping tak hingga. Stop total supaya user lihat playback selesai
+    // daripada stuck di retry spinner.
+    if (!blob || blob.size < 1024) {
+      console.warn(`[tts-queue] Blob kosong/corrupt (size=${blob?.size ?? 0}b) — stop.`);
+      this._disposeCurrent();
+      this._finish();
+      return;
+    }
     const url = URL.createObjectURL(blob);
     this._currentBlobUrl = url;
     const audio = new Audio(url);
     this._currentAudioEl = audio;
+    let retried = false;
+    let startedDispatched = false;
+
+    const dispatchStarted = () => {
+      if (startedDispatched) return;
+      startedDispatched = true;
+      try {
+        window.dispatchEvent(new CustomEvent('tts:playback-started'));
+      } catch { /* ignore */ }
+    };
 
     audio.onended = () => {
+      const a = this._currentAudioEl;
+      if (a) {
+        a.onended = a.onerror = a.onloadedmetadata = a.oncanplay = a.onplaying = a.ontimeupdate = null;
+      }
       this._disposeCurrent();
       this.clearHighlight();
       this.index += 1;
@@ -248,44 +294,99 @@ export class TtsQueueManager {
       }
       if (this.playing) this._speakCurrent();
     };
-    audio.onerror = () => {
-      console.warn('[tts-queue] Audio decode error, fallback Web Speech.');
-      this._disposeCurrent();
-      fallbackAndAdvance();
+
+    const detachListeners = (a) => {
+      if (!a) return;
+      a.onended = a.onerror = a.onloadedmetadata = a.oncanplay = a.onplaying = a.ontimeupdate = null;
     };
 
-    audio.play().catch((err) => {
-      console.warn('[tts-queue] audio.play() rejected:', err.message);
-      // Detach handlers biar onended/onerror tidak double-trigger fallbackAndAdvance.
-      audio.onended = null;
-      audio.onerror = null;
+    const advanceAfterFailure = (reason) => {
+      console.warn(`[tts-queue] ${reason} — lanjut segment berikutnya.`);
+      detachListeners(this._currentAudioEl);
       this._disposeCurrent();
-      fallbackAndAdvance();
+      this.clearHighlight();
+      this.index += 1;
+      if (this.index >= this.segments.length) {
+        this._finish();
+        return;
+      }
+      if (this.playing) this._speakCurrent();
+    };
+
+    const retryOnce = (why) => {
+      if (retried) {
+        advanceAfterFailure(`${why} setelah retry — stop`);
+        return;
+      }
+      retried = true;
+      console.warn(`[tts-queue] ${why}, retrying segment.`);
+      detachListeners(this._currentAudioEl);
+      this._disposeCurrent();
+      if (this.playing) this._speakCurrent();
+    };
+
+    // Decode-success detection. `loadedmetadata` fires setelah MP3 berhasil
+    // di-decode. Transition state di sini, bukan di play().
+    audio.onloadedmetadata = () => {
+      console.log(`[tts-queue] audio metadata loaded segment ${this.index} (dur=${audio.duration}s)`);
+      dispatchStarted();
+    };
+    audio.oncanplay = () => {
+      // Backup safety kalau loadedmetadata skip
+      dispatchStarted();
+    };
+    audio.onplaying = () => {
+      console.log(`[tts-queue] audio playing segment ${this.index}`);
+      dispatchStarted();
+    };
+    audio.ontimeupdate = () => {
+      // Backup safety: kalau audio sudah流 beberapa ms, anggap mulai.
+      if (!startedDispatched && audio.currentTime > 0.05) {
+        dispatchStarted();
+      }
+    };
+    audio.onerror = (e) => {
+      // Decode error. Bisa terjadi karena:
+      //   a) Corrupt MP3 — early failure, audio belum流 masuk. Trigger retry.
+      //   b) End-of-stream edge error (Chrome quirk) — audio SUDAH bermain
+      //      sampai currentTime mendekati duration. Harus treat sebagai natural
+      //      end, BUKAN failure. Kalau dipaksa retryOnce, single-chunk akan
+      //      fall ke advanceAfterFailure → _finish() dan bunyi berhenti di
+      //      tengah padahal secara visual audio sudah selesai.
+      const nearEnd = audio.duration && audio.currentTime >= audio.duration - 0.5;
+      const wasPlaying = startedDispatched;
+      console.warn(`[tts-queue] Audio decode error: ${e?.type || 'unknown'} cur=${audio.currentTime.toFixed(2)}/${audio.duration}s nearEnd=${nearEnd} started=${wasPlaying}`);
+      dispatchStarted();
+      if (nearEnd || wasPlaying) {
+        // Treat as natural completion — jangan retry, jangan advance.
+        detachListeners(this._currentAudioEl);
+        this._disposeCurrent();
+        this.clearHighlight();
+        this.index += 1;
+        if (this.index >= this.segments.length) {
+          this._finish();
+        } else if (this.playing) {
+          this._speakCurrent();
+        }
+        return;
+      }
+      retryOnce(`Audio decode error (${e?.type || 'unknown'})`);
+    };
+
+    audio.play().then(() => {
+      dispatchStarted();
+    }).catch((err) => {
+      console.warn('[tts-queue] audio.play() rejected:', err.message);
+      detachListeners(audio);
+      retryOnce(`audio.play() rejected (${err.message})`);
     });
   }
 
   _speakFallbackBrowser(segment, onEnd) {
-    if (!('speechSynthesis' in window)) {
-      // Tidak ada fallback apapun.
-      onEnd?.();
-      return;
-    }
-    const pack = getActivePack();
-    const utter = new SpeechSynthesisUtterance(segment.text);
-    const voice = (this.voices ?? []).find(
-      (v) => (v.lang || '').toLowerCase() === pack.toLowerCase()
-    ) ?? (this.voices ?? []).find(
-      (v) => (v.lang || '').toLowerCase().startsWith(pack.split('-')[0])
-    );
-    if (voice) utter.voice = voice;
-    utter.lang = pack;
-    utter.onend = () => onEnd?.();
-    utter.onerror = () => onEnd?.();
-    try {
-      window.speechSynthesis.speak(utter);
-    } catch {
-      onEnd?.();
-    }
+    // Tidak ada Web Speech fallback. Kalau tidak ada audio, langsung onEnd
+    // supaya queue advance ke segment berikutnya.
+    console.warn('[tts-queue] Web Speech fallback dihapus — skip segment dan lanjut.');
+    onEnd?.();
   }
 
   _disposeCurrent() {

@@ -4,12 +4,12 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
   <title>FictionFlow — Baca</title>
-  <link rel="stylesheet" href="/css/tailwind.output.css?v=4" />
+  <link rel="stylesheet" href="/css/tailwind.output.css?v=9" />
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Crimson+Pro:ital,wght@0,400;0,500;0,600;0,700;1,400;1,500&family=DM+Sans:ital,wght@0,400;0,500;0,700;1,400&display=swap" rel="stylesheet">
   <link href="https://fonts.googleapis.com/icon?family=Material+Icons+Round" rel="stylesheet">
-  <link rel="stylesheet" href="/css/chat-fixes.css?v=4">
+  <link rel="stylesheet" href="/css/chat-fixes.css?v=10">
 </head>
 <body class="theme-bg theme-text h-[100dvh] flex flex-col font-sans transition-colors duration-300 antialiased overflow-hidden">
 
@@ -144,25 +144,49 @@
           </div>
         </div>
         <div class="space-y-2">
-          <h3 class="text-xs font-bold uppercase tracking-wider text-theme-muted">Text-to-Speech (TTS)</h3>
+          <h3 class="text-xs font-bold uppercase tracking-wider text-theme-muted">Foto Profile AI</h3>
           <div class="surface-panel rounded-xl p-4 space-y-4">
             <div class="flex items-center justify-between">
               <div>
-                <span class="text-sm font-semibold">Aktifkan Suara</span>
-                <p class="text-[10px] text-theme-muted">Tidak auto-play. Tombol speaker muncul di setiap pesan AI.</p>
+                <span class="text-sm font-semibold">Gunakan Foto Profile</span>
+                <p class="text-[10px] text-theme-muted">Mengganti inisial huruf dengan foto dari URL.</p>
               </div>
               <label class="relative inline-flex items-center cursor-pointer">
-                <input type="checkbox" id="ttsToggle" class="sr-only peer">
+                <input type="checkbox" id="avatarEnabledToggle" class="sr-only peer">
                 <div class="w-9 h-5 bg-theme-hover peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-theme-accent"></div>
               </label>
             </div>
             <div class="space-y-1">
-              <label class="text-xs font-medium text-theme-muted">Bahasa Suara</label>
+              <label for="avatarUrlInput" class="text-xs font-medium text-theme-muted">URL Foto Profile</label>
+              <input
+                type="url"
+                id="avatarUrlInput"
+                placeholder="https://example.com/foto.jpg"
+                class="w-full text-sm bg-theme-bg border border-theme-border/50 rounded-lg p-2 focus:border-theme-accent focus:ring-1 focus:ring-theme-accent transition-all"
+                autocomplete="off"
+                spellcheck="false"
+              />
+              <p class="text-[10px] text-theme-muted">URL gambar (http/https). Disimpan per-cerita di SQL.</p>
+              <p id="avatarUrlError" class="text-[10px] text-red-500 hidden" role="alert"></p>
+              <p id="avatarUrlPreviewWrap" class="mt-2 hidden">
+                <img id="avatarUrlPreview" alt="Preview foto profile" class="w-12 h-12 rounded-full object-cover border border-theme-border/50" />
+                <span class="ml-2 text-[10px] text-theme-muted align-middle">Preview</span>
+              </p>
+            </div>
+          </div>
+        </div>
+        <div class="space-y-2">
+          <h3 class="text-xs font-bold uppercase tracking-wider text-theme-muted">Text-to-Speech (TTS)</h3>
+          <div class="surface-panel rounded-xl p-4 space-y-4">
+            <div class="space-y-1">
+              <label class="text-xs font-medium text-theme-muted">Suara Narasi &amp; Dialog</label>
               <select id="voicePack" class="w-full text-sm bg-theme-bg border border-theme-border/50 rounded-lg p-2 focus:border-theme-accent focus:ring-1 focus:ring-theme-accent transition-all appearance-none cursor-pointer hover:bg-theme-hover">
-                <option value="id-ID">Indonesian</option>
-                <option value="en-US">English (US)</option>
+                <option value="id-ID-ArdiNeural">🇮🇩 Indonesian — Male (Ardi)</option>
+                <option value="id-ID-GadisNeural">🇮🇩 Indonesian — Female (Gadis)</option>
+                <option value="en-US-GuyNeural">🇺🇸 English — Male (Guy)</option>
+                <option value="en-US-JennyNeural">🇺🇸 English — Female (Jenny)</option>
               </select>
-              <p class="text-[10px] text-theme-muted mt-1">Narasi = male, dialog karakter = sesuai gender.</p>
+              <p class="text-[10px] text-theme-muted mt-1">1 suara untuk seluruh pesan di sesi ini. Tersimpan otomatis per-cerita.</p>
             </div>
           </div>
         </div>
@@ -244,6 +268,6 @@
     </div>
   </footer>
 
-  <script type="module" src="/js/pages/story.page.js?v=3"></script>
+  <script type="module" src="/js/pages/story.page.js?v=23"></script>
 </body>
 </html>

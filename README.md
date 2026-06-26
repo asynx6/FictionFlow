@@ -245,4 +245,4 @@ Hasil: 13/13 PASS (semua endpoint, auto-seed, static serving, error handling).
 
 ## 📜 Lisensi
 
-MIT — gunakan, modifikasi, dan distribusikan secara bebas.
+[MIT](LICENSE)

@@ -1,4 +1,5 @@
 import { api } from '../core/api.js';
+import { apiClient } from '../api/apiClient.js';
 import { themeManager } from '../core/themeManager.js';
 import { Events, EventBus } from '../core/eventBus.js';
 import { ttsEngine } from '../core/ttsEngine.js';
@@ -27,8 +28,10 @@ const currentUtterance = {
   id: null,
   isPlaying: false,
   isPaused: false,
-  // Mode aktif: 'mixed' = audio_segments[], 'legacy' = Web Speech single text.
+  // Mode aktif: 'single'. Web Speech dihapus total (pakai Edge TTS only).
   mode: null,
+  // True saat POST /api/tts dalam flight (loading state untuk button).
+  isLoading: false,
 };
 
 // Audio playback delegate — singleton imported from ttsQueueManager.js
@@ -44,10 +47,11 @@ function stopSpeaking() {
 /** Shared reset: dipanggil dari stopSpeaking user-action DAN dari
  * ttsQueueManager 'tts:playback-finished' event (natural playback complete). */
 function resetUtteranceState() {
-  if (!currentUtterance.isPlaying && !currentUtterance.isPaused && currentUtterance.id === null) {
+  if (!currentUtterance.isLoading && !currentUtterance.isPlaying && !currentUtterance.isPaused && currentUtterance.id === null) {
     return; // already clean
   }
   currentUtterance.id = null;
+  currentUtterance.isLoading = false;
   currentUtterance.isPlaying = false;
   currentUtterance.isPaused = false;
   currentUtterance.mode = null;
@@ -59,6 +63,57 @@ window.addEventListener('tts:playback-finished', () => {
   EventBus.emit(Events.TTS_END);
   updateGlobalTtsButtons();
 });
+
+// Transition loading → playing saat audio.decode() selesai + audio.play() resolve.
+window.addEventListener('tts:playback-started', () => {
+  if (currentUtterance.id == null) return;
+  currentUtterance.isLoading = false;
+  currentUtterance.isPlaying = true;
+  EventBus.emit(Events.TTS_PLAYING);
+  updateGlobalTtsButtons();
+});
+
+// UI feedback saat fetch gagal (Backend timeout/error). Reset state
+// + show transient toast (3s) supaya user tahu kenapa tidak ada audio.
+window.addEventListener('tts:playback-failed', (ev) => {
+  if (currentUtterance.id == null) return;
+  resetUtteranceState();
+  EventBus.emit(Events.TTS_END);
+  updateGlobalTtsButtons();
+  const msg = ev?.detail?.message || 'TTS error';
+  showTransientError(`Audio gagal dimuat: ${msg}`);
+});
+
+/**
+ * Show transient non-blocking error toast di top-right — auto-dismiss 4s.
+ * Tidak interrupt alur user — informational saja boleh diulangi klik.
+ */
+let _toastTimer = null;
+function showTransientError(text) {
+  let toast = document.getElementById('tts-error-toast');
+  if (!toast) {
+    toast = document.createElement('div');
+    toast.id = 'tts-error-toast';
+    toast.setAttribute('role', 'status');
+    toast.style.cssText = [
+      'position:fixed', 'top:80px', 'right:24px', 'z-index:80',
+      'max-width:340px', 'padding:10px 14px', 'border-radius:12px',
+      'background-color:rgba(220,38,38,0.92)', 'color:#fff',
+      'font-size:13px', 'line-height:1.3',
+      'box-shadow:0 6px 24px rgba(0,0,0,0.25)',
+      'backdrop-filter:blur(6px)',
+      'opacity:0', 'transition:opacity 0.2s ease',
+      'pointer-events:auto',
+    ].join(';');
+    document.body.appendChild(toast);
+  }
+  toast.textContent = text;
+  toast.style.opacity = '1';
+  if (_toastTimer) clearTimeout(_toastTimer);
+  _toastTimer = setTimeout(() => {
+    toast.style.opacity = '0';
+  }, 4000);
+}
 
 function pauseSpeaking() {
   if (!currentUtterance.isPlaying || currentUtterance.isPaused) return;
@@ -76,17 +131,27 @@ function resumeSpeaking() {
 }
 
 function updateGlobalTtsButtons() {
-  document.querySelectorAll('.tts-btn').forEach((btn) => {
-    const msgId = btn.getAttribute('data-msg-id');
-    const icon = btn.querySelector('span');
-    if (currentUtterance.id === msgId && currentUtterance.isPlaying) {
-      icon.textContent = currentUtterance.isPaused ? 'play_arrow' : 'pause';
-      btn.title = currentUtterance.isPaused ? 'Lanjutkan' : 'Jeda';
-      btn.classList.add('playing');
+  // State-based show/hide: 5 actions → 5 buttons per toolbar.
+  // - data-state='idle'     → only play icon
+  // - data-state='loading'  → only hourglass icon
+  // - data-state='playing'  → pause + stop
+  // - data-state='paused'   → resume + stop
+  const state = !currentUtterance.id
+    ? 'idle'
+    : currentUtterance.isLoading
+      ? 'loading'
+      : currentUtterance.isPaused
+        ? 'paused'
+        : 'playing';
+
+  document.querySelectorAll('.tts-toolbar').forEach((tb) => {
+    const tbMsgId = tb.getAttribute('data-msg-id');
+    const isCurrent = currentUtterance.id === tbMsgId;
+    // Apply state only to the toolbar of the playing msg.
+    if (!isCurrent) {
+      tb.setAttribute('data-state', 'idle');
     } else {
-      icon.textContent = 'volume_up';
-      btn.title = 'Dengarkan';
-      btn.classList.remove('playing');
+      tb.setAttribute('data-state', state);
     }
   });
 }
@@ -125,6 +190,44 @@ function getActiveVoicePack() {
   return (voicePack?.value || localStorage.getItem('fictionflow_voice_pack') || 'id-ID').toString();
 }
 
+/**
+ * Render an AI avatar element into a target container.
+ * Kalau avatar_enabled + URL valid → render <img>. Else → render inisial huruf.
+ * Returns true kalau img berhasil dirender; false kalau fallback ke inisial.
+ * Idempotent: aman dipanggil ulang tiap kali story di-reload.
+ */
+function isAvatarActive(story) {
+  if (!story) return false;
+  const enabled = story.avatar_enabled === 1 || story.avatar_enabled === true;
+  const url = (story.avatar_url ?? '').toString().trim();
+  return enabled && !!url && /^https?:\/\//i.test(url);
+}
+
+function renderAvatarInto(target, story, { sizeClasses = 'w-9 h-9 sm:w-10 sm:h-10 text-lg' } = {}) {
+  if (!target) return;
+  const initial = (story?.ai_name ?? '?').toString().charAt(0).toUpperCase();
+  if (isAvatarActive(story)) {
+    target.innerHTML = `<img src="${escapeHtmlAttr(story.avatar_url)}" alt="${escapeHtmlAttr(story?.ai_name ?? 'AI')}" class="${sizeClasses} rounded-full object-cover bg-gradient-to-br from-theme-accent/20 to-theme-accent/5 border border-theme-accent/20 shadow-sm" onerror="this.replaceWith(Object.assign(document.createElement('span'),{className:'${sizeClasses} rounded-full flex items-center justify-center bg-gradient-to-br from-theme-accent/20 to-theme-accent/5 border border-theme-accent/20 text-theme-accent font-serif font-bold shadow-sm',textContent:'${initial}'}))" />`;
+  } else {
+    target.textContent = initial;
+  }
+}
+
+function escapeHtmlAttr(s) {
+  return String(s ?? '').replace(/[&"'<>]/g, (c) => ({ '&': '&amp;', '"': '&quot;', "'": '&#39;', '<': '&lt;', '>': '&gt;' }[c]));
+}
+
+function isValidAvatarUrl(value) {
+  const v = (value ?? '').toString().trim();
+  if (!v) return false;
+  try {
+    const u = new URL(v);
+    return (u.protocol === 'http:' || u.protocol === 'https:') && v.length <= 2048;
+  } catch {
+    return false;
+  }
+}
+
 /** Map pack + gender → EdgeTTS voice_name yang valid. Sumber kebenaran tunggal. */
 function pickEdgeVoiceForSegment(pack, gender) {
   const g = (gender ?? '').toString();
@@ -157,18 +260,37 @@ function playNextSegment() {
  */
 const currentAudioSegments = {};
 
-function speakMessage(msgId, textOrSegments) {
-  if (!window.speechSynthesis && !(typeof Audio !== 'undefined')) {
-    console.warn('[TTS] Browser tidak support TTS.');
-    return;
-  }
-  const ttsEnabled = document.getElementById('ttsToggle')?.checked;
-  if (ttsEnabled === false) {
-    const settingsBtn = document.getElementById('settingsToggleBtn');
-    if (settingsBtn) settingsBtn.click();
-    return;
-  }
+const DEFAULT_TTS_VOICE = 'id-ID-ArdiNeural';
 
+const VALID_TTS_VOICES = new Set([
+  'id-ID-ArdiNeural',
+  'id-ID-GadisNeural',
+  'en-US-GuyNeural',
+  'en-US-JennyNeural',
+]);
+
+/**
+ * Module-level cache untuk currentStory. Di-update dari loadStoryAndMessages
+ * setiap kali story fetched. speakMessage() function (dideklarasikan di top-
+ * level module) membaca dari cache ini — tidak bisa langsung akses variable
+ * `currentStory` karena variable itu scoped ke DOMContentLoaded callback.
+ */
+let __currentStoryCache = null;
+
+/**
+ * Pilih Edge TTS voice dari currentStory.tts_voice (sumber kebenaran).
+ * Fallback ke default Indonesian male kalau story belum ada / value invalid.
+ */
+function resolveStoryVoice() {
+  const v = __currentStoryCache && __currentStoryCache.tts_voice;
+  if (typeof v === 'string' && VALID_TTS_VOICES.has(v)) return v;
+  return DEFAULT_TTS_VOICE;
+}
+
+async function speakMessage(msgId, textOrSegments) {
+  // TTS selalu aktif. Tidak ada toggle "Aktifkan Suara" lagi — server-side
+  // Edge TTS selalu jalan jika user klik tombol speaker.
+  // Pause/resume kalau klik tombol yang sama.
   if (currentUtterance.id === msgId && currentUtterance.isPlaying) {
     if (currentUtterance.isPaused) {
       resumeSpeaking();
@@ -178,54 +300,54 @@ function speakMessage(msgId, textOrSegments) {
     return;
   }
 
+  // Klik tombol untuk message BERBEDA → kill apapun yang sedang jalan
+  // (audio element + blob URL + inflight fetch + Web Speech) via stopSpeaking().
   stopSpeaking();
 
+  const voice = resolveStoryVoice();
+  let unifiedText = '';
+
+  // Kumpulkan full text jadi 1 chunk, tidak peduli inputnya cached segments
+  // atau string mentah. Hasilnya single POST /api/tts → single MP3 → audio
+  // mulus tanpa gap antar fetch/segment.
   const segments = Array.isArray(textOrSegments) ? textOrSegments : null;
   if (segments && segments.length > 0) {
-    // Mixed mode: Edge TTS per segment + Web Speech fallback.
-    currentAudioSegments[msgId] = segments;
-    currentUtterance.id = msgId;
-    currentUtterance.mode = 'mixed';
-    currentUtterance.isPlaying = true;
-    currentUtterance.isPaused = false;
-    EventBus.emit(Events.TTS_START);
-    ttsQueue.enqueueSegments(segments);
-    ttsQueue.play();
-    updateGlobalTtsButtons();
+    // Cached chunks (audio_segments[]) → gabung.
+    unifiedText = segments
+      .map((s) => (s?.text ?? '').toString().replace(/\s+/g, ' ').trim())
+      .filter(Boolean)
+      .join(' ');
+  } else if (typeof textOrSegments === 'string') {
+    unifiedText = textOrSegments;
+  }
+
+  // Strip notts/markdown residue.
+  const cleaned = ttsEngine.parseTtsText(unifiedText);
+  if (!cleaned || !cleaned.trim()) {
+    console.warn('[tts] cleaned text kosong, abort. msgId=', msgId);
     return;
   }
 
-  // Legacy mode: fallback kalau audio_segments tidak tersedia (mis. cerita lama).
-  const cleaned = ttsEngine.parseTtsText(typeof textOrSegments === 'string' ? textOrSegments : '');
-  if (!cleaned) return;
-  const utterance = new SpeechSynthesisUtterance(cleaned);
-  const voices = ttsEngine.getVoices();
-  const storedIndex = localStorage.getItem('fictionflow_voice');
-  if (storedIndex && voices[storedIndex]) {
-    utterance.voice = voices[storedIndex];
-  }
-  utterance.rate = 1;
-  utterance.pitch = 1;
-  utterance.lang = (currentStory?.language_style === 'ceplas_ceplos' || currentStory?.language_style === 'profesional')
-    ? 'id-ID'
-    : 'id-ID';
+  const aiGenderRaw = __currentStoryCache?.ai_gender?.toString?.() ?? '';
+  const gender = aiGenderRaw === 'female' ? 'female' : 'male';
 
-  utterance.onstart = () => {
-    currentUtterance.id = msgId;
-    currentUtterance.isPlaying = true;
-    currentUtterance.isPaused = false;
-    currentUtterance.mode = 'legacy';
-    EventBus.emit(Events.TTS_START);
-    updateGlobalTtsButtons();
-  };
-  utterance.onend = () => {
-    if (currentUtterance.id === msgId) stopSpeaking();
-  };
-  utterance.onerror = () => {
-    if (currentUtterance.id === msgId) stopSpeaking();
-  };
+  const singleChunk = [{
+    tag: 'NARASI',
+    text: cleaned.trim(),
+    voice: voice,
+    gender: gender,
+  }];
 
-  window.speechSynthesis.speak(utterance);
+  currentUtterance.id = msgId;
+  currentUtterance.mode = 'single';
+  currentUtterance.isLoading = true; // fetch in flight
+  currentUtterance.isPlaying = false;
+  currentUtterance.isPaused = false;
+  EventBus.emit(Events.TTS_START);
+  EventBus.emit(Events.TTS_LOADING); // custom: button show spinner
+  ttsQueue.enqueueSegments(singleChunk);
+  ttsQueue.play();
+  updateGlobalTtsButtons();
 }
 
 function speakLastAiMessage() {
@@ -285,6 +407,14 @@ document.addEventListener('DOMContentLoaded', async () => {
   const closeSettingsBtn = document.getElementById('closeSettingsBtn');
   const viewMemoryBtn = document.getElementById('viewMemoryBtn');
   const factCountBadge = document.getElementById('factCountBadge');
+
+  // DOM Elements - Avatar Settings
+  const avatarEnabledToggle = document.getElementById('avatarEnabledToggle');
+  const avatarUrlInput = document.getElementById('avatarUrlInput');
+  const avatarUrlError = document.getElementById('avatarUrlError');
+  const avatarUrlPreviewWrap = document.getElementById('avatarUrlPreviewWrap');
+  const avatarUrlPreview = document.getElementById('avatarUrlPreview');
+  let avatarSaveTimer = null;
 
   // DOM Elements - Memory Modal
   const memoryModal = document.getElementById('memoryModal');
@@ -600,23 +730,103 @@ document.addEventListener('DOMContentLoaded', async () => {
   // dan Web Speech API fallback otomatis pakai locale yang sama.
   const initTTS = async () => {
     await ttsEngine.init();
-    const storedPack = localStorage.getItem('fictionflow_voice_pack');
-    if (storedPack && voicePack) {
-      voicePack.value = storedPack;
-    }
+    // Voice dibaca dari currentStory.tts_voice (sumber kebenaran: SQL kolom
+    // stories.tts_voice). Populated di loadStoryAndMessages() setelah fetch
+    // story berhasil. Jangan pakai localStorage — tidak reliable cross-session.
   };
 
-  if (voicePack) voicePack.addEventListener('change', (e) => {
-    localStorage.setItem('fictionflow_voice_pack', e.target.value);
-  });
-
-  if (ttsToggle) {
-    ttsToggle.addEventListener('change', (e) => {
-      localStorage.setItem('fictionflow_tts_enabled', e.target.checked);
-      updateTtsToggleUi();
+  if (avatarEnabledToggle && avatarUrlInput) {
+    const setAvatarError = (msg) => {
+      if (!avatarUrlError) return;
+      if (msg) {
+        avatarUrlError.textContent = msg;
+        avatarUrlError.classList.remove('hidden');
+      } else {
+        avatarUrlError.textContent = '';
+        avatarUrlError.classList.add('hidden');
+      }
+    };
+    const scheduleSave = () => {
+      if (!currentStory) return;
+      if (avatarSaveTimer) clearTimeout(avatarSaveTimer);
+      avatarSaveTimer = setTimeout(async () => {
+        if (!currentStory) return;
+        const wantsEnabled = !!avatarEnabledToggle.checked;
+        const rawUrl = avatarUrlInput.value;
+        const url = rawUrl.trim();
+        if (wantsEnabled && !url) {
+          // Auto-disable sesuai requirement: enable tanpa URL → paksa off + error toast.
+          avatarEnabledToggle.checked = false;
+          setAvatarError('Aktifkan toggle membutuhkan URL gambar.');
+          currentStory.avatar_enabled = 0;
+        } else if (wantsEnabled && !isValidAvatarUrl(url)) {
+          setAvatarError('URL tidak valid. Gunakan http/https, max 2048 karakter.');
+          currentStory.avatar_enabled = 0;
+          avatarEnabledToggle.checked = false;
+        } else {
+          setAvatarError('');
+          if (currentStory.avatar_enabled !== (wantsEnabled ? 1 : 0) ||
+              (currentStory.avatar_url ?? null) !== (url || null)) {
+            currentStory.avatar_enabled = wantsEnabled ? 1 : 0;
+            currentStory.avatar_url = url || null;
+            try {
+              await apiClient.updateStory(currentStory.id, {
+                avatar_enabled: currentStory.avatar_enabled === 1,
+                avatar_url: currentStory.avatar_url,
+              });
+              // Refresh semua avatar in-place supaya dashboard/profil sinkron.
+              renderAvatarInto(headerAvatar, currentStory);
+              document.querySelectorAll('.ai-avatar-slot').forEach((node) => {
+                renderAvatarInto(node, currentStory, { sizeClasses: 'w-8 h-8 sm:w-9 sm:h-9 text-sm' });
+              });
+            } catch (err) {
+              console.warn('[avatar] gagal simpan:', err?.message);
+              setAvatarError(err?.message || 'Gagal menyimpan.');
+            }
+          }
+        }
+      }, 350);
+    };
+    avatarEnabledToggle.addEventListener('change', scheduleSave);
+    avatarUrlInput.addEventListener('input', () => {
+      const url = avatarUrlInput.value.trim();
+      if (avatarUrlPreviewWrap && avatarUrlPreview) {
+        if (isValidAvatarUrl(url)) {
+          avatarUrlPreview.src = url;
+          avatarUrlPreviewWrap.classList.remove('hidden');
+          setAvatarError('');
+        } else if (!url) {
+          avatarUrlPreviewWrap.classList.add('hidden');
+          setAvatarError('');
+        } else {
+          avatarUrlPreviewWrap.classList.add('hidden');
+        }
+      }
+      scheduleSave();
     });
   }
 
+  if (voicePack) voicePack.addEventListener('change', async (e) => {
+    const newVoice = (e.target.value || '').toString();
+    if (!newVoice) return;
+    const story = __currentStoryCache || currentStory;
+    if (!story || !story.id) {
+      console.warn('[tts] voicePack change tanpa currentStory — abort save.');
+      return;
+    }
+    // Optimistic update ke local + module-cache supaya speakMessage berikutnya
+    // langsung pakai voice baru tanpa refresh.
+    currentStory.tts_voice = newVoice;
+    __currentStoryCache.tts_voice = newVoice;
+    try {
+      await apiClient.updateStory(story.id, { tts_voice: newVoice });
+      console.log('[tts] voicePack saved to story:', newVoice);
+    } catch (err) {
+      console.warn('[tts] gagal simpan tts_voice ke story:', err?.message);
+    }
+  });
+
+  // ttsToggle dihapus dari UI — TTS selalu ON.
   updateTtsToggleUi();
 
   EventBus.on(Events.TTS_START, () => {
@@ -687,10 +897,37 @@ document.addEventListener('DOMContentLoaded', async () => {
     contentEl.innerHTML = html;
   };
 
+  /**
+   * Bubbles yang di-streaming dibuat dengan temp id (`temp-${Date.now()}`,
+   * `ai-${Date.now()}`). Setelah backend konfirmasi id final via SSE 'meta'
+   * (untuk user) atau 'done' (untuk AI), kita update DOM references. SEBELUM
+   * fix ini, hanya satu `.tts-btn` (play button) yang di-update — toolbar +
+   * 4 tombol lain (loading/pause/resume/stop) tetap pakai temp id. Akibatnya
+   * saat user klik play, currentUtterance.id jadi id real, tapi toolbar
+   * masih pakai temp id → `updateGlobalTtsButtons` tidak match → toolbar
+   * stuck di `idle` (volume_up icon) meskipun audio sudah mulai bunyi.
+   * Sekarang: update toolbar + SEMUA button + re-eval state real-time.
+   */
   const setBubbleRealId = (bubble, realId) => {
+    if (!bubble || realId == null) return;
     bubble.id = `msg-${realId}`;
-    const ttsBtn = bubble.querySelector('.tts-btn');
-    if (ttsBtn) ttsBtn.setAttribute('data-msg-id', realId);
+    const newIdStr = String(realId);
+    const toolbar = bubble.querySelector('.tts-toolbar');
+    if (toolbar) {
+      toolbar.setAttribute('data-msg-id', newIdStr);
+    }
+    // Update semua action buttons (play/loading/pause/resume/stop) di
+    // bubble ini. Hindari pakai `.tts-btn` saja karena itu hanya match
+    // play + loading (keduanya `tts-play-icon tts-btn`).
+    bubble.querySelectorAll('[data-action]').forEach((btn) => {
+      btn.setAttribute('data-msg-id', newIdStr);
+    });
+    // Kalau state machine aktif sudah menunjuk message ini (clicks happened
+    // sebelumnya dengan temp id, atau user langsung klik setelah streaming
+    // selesai supaya match → toolbar bergerak ke state yang betul.
+    if (currentUtterance && String(currentUtterance.id) === newIdStr) {
+      updateGlobalTtsButtons();
+    }
   };
 
   const createMessageBubble = (msg) => {
@@ -705,17 +942,20 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     if (isUser) {
       div.innerHTML = `
-        <div class="msg-user-block">
-           <div class="msg-content shadow-sm">
+        <div class="msg-user-block" style="display:block !important;max-width:min(280px,70vw) !important;width:auto !important;flex:0 1 auto !important;text-align:right;">
+           <div class="msg-content shadow-sm" style="display:inline-block !important;padding:5px 10px !important;line-height:1.2 !important;border-radius:14px !important;border-top-right-radius:4px !important;background-color:rgb(var(--theme-hover)/0.7) !important;color:rgb(var(--theme-text)) !important;font-family:'DM Sans',sans-serif !important;font-size:14px !important;border:1px solid rgb(var(--theme-border) / 0.3) !important;max-width:100% !important;word-break:break-word !important;white-space:pre-wrap !important;overflow-wrap:break-word !important;">
              ${contentHtml}
            </div>
-           <span class="msg-time">${timeLabel}</span>
+           <span class="msg-time" style="display:block;width:100%;text-align:right;margin-top:2px;font-size:10px;color:rgb(var(--theme-muted));">${timeLabel}</span>
         </div>
       `;
     } else {
+      const avatarHtml = isAvatarActive(currentStory)
+        ? `<img src="${escapeHtmlAttr(currentStory.avatar_url)}" alt="${escapeHtmlAttr(currentStory.ai_name)}" class="avatar ai-avatar-slot w-8 h-8 sm:w-9 sm:h-9 rounded-full object-cover" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'avatar',textContent:'${currentStory.ai_name.charAt(0).toUpperCase()}'}))" />`
+        : `<div class="avatar" aria-hidden="true">${currentStory.ai_name.charAt(0).toUpperCase()}</div>`;
       div.innerHTML = `
         <div class="msg-ai-block">
-          <div class="avatar" aria-hidden="true">${currentStory.ai_name.charAt(0).toUpperCase()}</div>
+          ${avatarHtml}
           <div class="flex flex-col items-start min-w-0 flex-1">
              <span class="msg-author">${currentStory.ai_name}</span>
              <div class="msg-content prose-story">
@@ -723,25 +963,58 @@ document.addEventListener('DOMContentLoaded', async () => {
                ${msg.is_typing ? '<span class="inline-block w-2 h-4 bg-theme-accent animate-pulse ml-1 align-middle"></span>' : ''}
              </div>
              <div class="flex items-center gap-2 mt-1.5 pl-1">
-               <span class="text-[10px] text-theme-muted opacity-0 group-hover:opacity-100 transition-opacity">${timeLabel}</span>
-               <button class="tts-btn" data-msg-id="${msg.id}" data-text="${encodeURIComponent(messageContent)}" title="Dengarkan">
-                 <span class="material-icons-round text-[14px]">volume_up</span>
-               </button>
+               <span class="tts-time text-[10px] text-theme-muted opacity-0 group-hover:opacity-100 transition-opacity">${timeLabel}</span>
+               <div class="tts-toolbar" data-state="idle" data-msg-id="${msg.id}" data-text="${encodeURIComponent(messageContent)}">
+                 <button class="tts-play-icon tts-btn" data-action="play" data-msg-id="${msg.id}" data-text="${encodeURIComponent(messageContent)}" title="Dengarkan">
+                   <span class="material-icons-round text-[14px]">volume_up</span>
+                 </button>
+                 <button class="tts-play-icon tts-btn hidden" data-action="loading" data-msg-id="${msg.id}" title="Memuat audio…" disabled>
+                   <span class="material-icons-round text-[14px] animate-spin">hourglass_top</span>
+                 </button>
+                 <button class="tts-pause-btn hidden" data-action="pause" data-msg-id="${msg.id}" title="Jeda">
+                   <span class="material-icons-round text-[14px]">pause</span>
+                 </button>
+                 <button class="tts-resume-btn hidden" data-action="resume" data-msg-id="${msg.id}" title="Lanjutkan">
+                   <span class="material-icons-round text-[14px]">play_arrow</span>
+                 </button>
+                 <button class="tts-stop-btn hidden" data-action="stop" data-msg-id="${msg.id}" title="Hentikan">
+                   <span class="material-icons-round text-[14px]">stop</span>
+                 </button>
+               </div>
              </div>
           </div>
         </div>
       `;
-      const ttsBtn = div.querySelector('.tts-btn');
-      if (ttsBtn) {
-        ttsBtn.addEventListener('click', () => {
-          const id = ttsBtn.getAttribute('data-msg-id');
-          const segs = _readSegments(ttsBtn);
-          if (segs) {
-            speakMessage(id, segs);
-            return;
+      // Single delegated click handler on toolbar: route by data-action.
+      const toolbar = div.querySelector('.tts-toolbar');
+      if (toolbar) {
+        toolbar.addEventListener('click', (ev) => {
+          ev.stopPropagation();
+          const btn = ev.target.closest('[data-action]');
+          if (!btn) return;
+          const action = btn.getAttribute('data-action');
+          const id = btn.getAttribute('data-msg-id');
+          if (action === 'play') {
+            const segs = _readSegments(btn);
+            if (segs && Array.isArray(segs) && segs.length > 0) {
+              speakMessage(id, segs);
+              return;
+            }
+            let text = decodeURIComponent(btn.getAttribute('data-text') || '');
+            if (!text || !text.trim()) {
+              const msgContentEl = div.querySelector('.msg-content');
+              if (msgContentEl) {
+                text = msgContentEl.textContent || msgContentEl.innerText || '';
+              }
+            }
+            speakMessage(id, text);
+          } else if (action === 'pause') {
+            pauseSpeaking();
+          } else if (action === 'resume') {
+            resumeSpeaking();
+          } else if (action === 'stop') {
+            stopSpeaking();
           }
-          const text = decodeURIComponent(ttsBtn.getAttribute('data-text') || '');
-          speakMessage(id, text);
         });
       }
     }
@@ -754,12 +1027,30 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (!res.success) throw new Error('Story not found');
 
       currentStory = res.data?.story ?? res.data;
+      // Mirror ke module-level cache supaya speakMessage (dideklarasikan di
+      // module scope, sebelum DOMContentLoaded) bisa baca via resolveStoryVoice().
+      __currentStoryCache = currentStory;
 
       if (!currentStory?.ai_name) throw new Error('Data cerita tidak valid dari server.');
 
       headerAiName.textContent = currentStory.ai_name;
-      headerAvatar.textContent = currentStory.ai_name.charAt(0).toUpperCase();
+      renderAvatarInto(headerAvatar, currentStory);
       headerContext.textContent = `Roleplay dengan ${currentStory.ai_name} (${currentStory.language_style ?? ''})`.trim();
+
+      // Populate avatar settings from currentStory.
+      if (avatarEnabledToggle && avatarUrlInput) {
+        avatarEnabledToggle.checked = isAvatarActive(currentStory);
+        avatarUrlInput.value = (currentStory.avatar_url ?? '').toString();
+        if (avatarUrlPreviewWrap && avatarUrlPreview) {
+          if (isValidAvatarUrl(avatarUrlInput.value)) {
+            avatarUrlPreview.src = avatarUrlInput.value;
+            avatarUrlPreviewWrap.classList.remove('hidden');
+          } else {
+            avatarUrlPreviewWrap.classList.add('hidden');
+          }
+        }
+        if (avatarUrlError) avatarUrlError.classList.add('hidden');
+      }
 
       const dynamicMem = currentStory.dynamic_memory;
       if (dynamicMem) {
@@ -778,31 +1069,73 @@ document.addEventListener('DOMContentLoaded', async () => {
         factCountBadge.textContent = `${facts.length} fakta`;
       }
 
-      if (!localStorage.getItem('fictionflow_voice_pack')) {
-        const aiName = (currentStory.ai_name || '').toLowerCase();
-        const looksEnglish = /^[a-z .'-]+$/.test(aiName) && !/(aria|sinta|dewi|luna|lestari|putri)/i.test(aiName);
-        const def = looksEnglish ? 'en-US' : 'id-ID';
-        localStorage.setItem('fictionflow_voice_pack', def);
-        if (voicePack) voicePack.value = def;
+      // Voice dropdown di-populate dari currentStory.tts_voice (sumber kebenaran
+      // = SQL kolom stories.tts_voice). Default Indonesian male kalau story
+      // belum pernah diset (legacy row pre-migration).
+      const voiceFromStory = (currentStory.tts_voice || '').toString();
+      const fallbacks = ['id-ID-ArdiNeural', 'id-ID-GadisNeural', 'en-US-GuyNeural', 'en-US-JennyNeural'];
+      const settledVoice = fallbacks.includes(voiceFromStory) ? voiceFromStory : 'id-ID-ArdiNeural';
+      if (currentStory.tts_voice !== settledVoice) {
+        // Backfill default ke memory (juga ke SQL via patch later — avoids hitting DB on every load).
+        currentStory.tts_voice = settledVoice;
       }
+      if (voicePack) voicePack.value = settledVoice;
+
+      // SYNC warmup untuk story's chosen voice: blocking sampai cache ready
+      // atau 25s timeout. Tujuannya = first user click dijamin instant response.
+      if (loadingChat) {
+        loadingChat.innerHTML = `
+          <div class="flex flex-col items-center gap-2">
+            <span class="material-icons-round animate-spin text-theme-accent text-3xl">autorenew</span>
+            <span class="text-xs text-theme-muted">Menyiapkan suara: ${settledVoice.replace(/^([^-]+-[^-]+).*/, '$1')}</span>
+          </div>
+        `;
+      }
+      let warmReady = false;
+      try {
+        const r = await apiClient.warmupTts({ voice: settledVoice, wait: true });
+        warmReady = r?.data?.ready === true;
+        console.log('[tts-warm] sync warmup result:', r);
+      } catch (err) {
+        console.warn('[tts-warm] sync warmup error:', err?.message);
+      }
+      if (!warmReady) {
+        console.warn(`[tts-warm] sync warmup timeout/incomplete untuk ${settledVoice}. First click mungkin slow.`);
+      }
+
+      // Background warm untuk 3 other voices (tidak blok UI).
+      try {
+        const others = fallbacks.filter((v) => v !== settledVoice);
+        others.forEach((voice, i) => {
+          setTimeout(() => apiClient.warmupTts({ voice }).catch(() => {}), 500 * (i + 1));
+        });
+      } catch { /* ignore */ }
 
       const msgRes = await api.get(`/stories/${storyId}/messages`);
       const messages = msgRes.data?.messages ?? msgRes.data ?? [];
       // Fetch TTS cache untuk setiap assistant message (mixed-mode replay).
+      // Backend route /tts-latest return { items: [{ message_id, segments, ... }] }
+      // dengan segments SUDAH parsed array (bukan segments_json string).
       let ttsByMessageId = {};
       try {
         const ttsRes = await api.get(`/stories/${storyId}/messages/tts-latest`);
         const allTts = ttsRes.data?.items ?? ttsRes.data ?? [];
         if (Array.isArray(allTts)) {
           for (const entry of allTts) {
-            try {
-              const segs = JSON.parse(entry.segments_json || '[]');
+            let segs = null;
+            if (Array.isArray(entry?.segments)) {
+              segs = entry.segments;
+            } else if (typeof entry?.segments_json === 'string') {
+              try { segs = JSON.parse(entry.segments_json); } catch { /* ignore */ }
+            }
+            if (Array.isArray(segs) && segs.length > 0 && entry?.message_id != null) {
               ttsByMessageId[entry.message_id] = segs;
-            } catch (_) {}
+            }
           }
+          console.log(`[load] /tts-latest populated ${Object.keys(ttsByMessageId).length} messages with TTS segments.`);
         }
-      } catch (_) {
-        // tts-latest optional, fail silent
+      } catch (err) {
+        console.warn('[load] /tts-latest fetch gagal:', err?.message);
       }
 
       loadingChat.classList.add('hidden');

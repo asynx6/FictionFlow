@@ -31,6 +31,37 @@ const MIGRATIONS = [
       addColumnIfMissing('stories', "dynamic_memory", "TEXT DEFAULT '[]'");
     },
   },
+  {
+    version: 3,
+    description: 'Add tts_voice column (per-story voice pack choice)',
+    up: (db) => {
+      const hasColumn = (table, column) => {
+        const cols = db.prepare(`PRAGMA table_info(${table})`).all();
+        return cols.some((c) => c.name === column);
+      };
+      if (!hasColumn('stories', 'tts_voice')) {
+        // DEFAULT clause backfills existing rows otomatis.
+        db.exec("ALTER TABLE stories ADD COLUMN tts_voice TEXT NOT NULL DEFAULT 'id-ID-ArdiNeural'");
+      }
+    },
+  },
+  {
+    version: 4,
+    description: 'Add avatar_url + avatar_enabled columns (per-story profile picture)',
+    up: (db) => {
+      const hasColumn = (table, column) => {
+        const cols = db.prepare(`PRAGMA table_info(${table})`).all();
+        return cols.some((c) => c.name === column);
+      };
+      if (!hasColumn('stories', 'avatar_url')) {
+        db.exec('ALTER TABLE stories ADD COLUMN avatar_url TEXT');
+      }
+      if (!hasColumn('stories', 'avatar_enabled')) {
+        // 0 = disabled (fallback to initial letter), 1 = pakai URL.
+        db.exec('ALTER TABLE stories ADD COLUMN avatar_enabled INTEGER NOT NULL DEFAULT 0');
+      }
+    },
+  },
 ];
 
 export function runMigrations(db) {

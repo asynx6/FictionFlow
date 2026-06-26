@@ -43,6 +43,17 @@ const getMessageOwnerStmt = db.prepare(`
 
 const MAX_MESSAGE_CONTENT = 20000;
 
+// Daftar TTS cache untuk semua assistant messages di story. Frontend pakai
+// ini untuk pre-populate currentAudioSegments saat load cerita — supaya
+// replay klik tombol speaker tanpa re-synthesize.
+const listTtsLatestStmt = db.prepare(`
+  SELECT message_id, segments_json, provider, synthesized_at
+  FROM message_tts
+  WHERE story_id = ?
+  ORDER BY synthesized_at DESC, id DESC
+  LIMIT ?
+`);
+
 function requireStory(req, _res, next) {
   const story = getStoryStmt.get(req.params.id);
   if (!story) return next(new HttpError(404, 'Story tidak ditemukan.'));
@@ -121,6 +132,34 @@ router.post('/fallback', async (req, res, next) => {
   } catch (err) {
     next(err);
   }
+});
+
+router.get('/tts-latest', (req, res) => {
+  // Join ke messages untuk pastikan hanya assistant message yang punya TTS
+  // yang dikembalikan. Kalau tidak ada cache sama sekali, return { items: [] }
+  // dengan 200 — bukan 404 — supaya frontend bisa skip tanpa try/catch.
+  const limit = Math.min(Number.parseInt(req.query.limit ?? '50', 10) || 50, 200);
+  const rows = listTtsLatestStmt.all(req.story.id, limit);
+  const items = rows.map((row) => {
+    let segments = null;
+    try {
+      segments = JSON.parse(row.segments_json);
+    } catch {
+      segments = null;
+    }
+    return {
+      message_id: row.message_id,
+      segments,
+      provider: row.provider,
+      synthesized_at: row.synthesized_at,
+    };
+  }).filter((it) => Array.isArray(it.segments));
+  res.json({
+    success: true,
+    data: { items },
+    message: 'OK',
+    meta: { timestamp: new Date().toISOString() },
+  });
 });
 
 router.get('/:messageId/tts-cache', (req, res, next) => {

@@ -153,4 +153,23 @@ export const apiClient = {
     }
     return res.blob();
   },
+
+  /**
+   * POST /api/tts/warmup — fire-and-forget (default) atau blocking (wait=true).
+   * Backend returns 202 instantly or 200 saat warm selesai (max 25s).
+   * Default behavior = fire-and-forget (`wait: false`) supaya page load
+   * tidak tertahan kalau Edge TTS latency tinggi.
+   * @param {{ voice?: string, wait?: boolean }} opts
+   * @returns {Promise<{success:boolean, data:{voice?:string, ready?:boolean}}|null>}
+   */
+  warmupTts: ({ voice, wait = false } = {}) => {
+    const qs = wait ? '?wait=true' : '';
+    return fetch(`${BASE}/tts/warmup${qs}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ voice, wait }),
+    })
+      .then((r) => (r.ok ? r.json() : null))
+      .catch(() => null);
+  },
 };

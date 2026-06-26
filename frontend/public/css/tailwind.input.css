@@ -130,7 +130,7 @@
     @apply flex flex-col items-end max-w-[85%] sm:max-w-[75%] md:max-w-[65%];
   }
   .msg-user-block .msg-content {
-    @apply inline-block px-4 py-2.5 bg-theme-hover/70 text-theme-text rounded-2xl rounded-tr-md text-sm sm:text-[15px] leading-snug break-words whitespace-pre-wrap min-w-0 font-sans border border-theme-border/30;
+    @apply inline-block px-3 py-1.5 bg-theme-hover/70 text-theme-text rounded-2xl rounded-tr-md text-sm sm:text-[14px] leading-snug break-words whitespace-pre-wrap min-w-0 font-sans border border-theme-border/30;
   }
   .msg-user-block .msg-time {
     @apply text-[10px] text-theme-muted mt-1.5 opacity-0 group-hover:opacity-100 transition-opacity pr-1;

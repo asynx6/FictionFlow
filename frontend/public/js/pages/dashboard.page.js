@@ -116,19 +116,114 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   });
 
-  const formatRelativeDate = (dateString) => {
-    const date = new Date(dateString);
-    const now = new Date();
-    const diffSeconds = Math.floor((now.getTime() - date.getTime()) / 1000);
-    if (diffSeconds < 60) return 'Baru saja';
-    if (diffSeconds < 3600) return `${Math.floor(diffSeconds / 60)}m yang lalu`;
-    if (diffSeconds < 86400) return `${Math.floor(diffSeconds / 3600)}j yang lalu`;
-    if (diffSeconds < 604800) return `${Math.floor(diffSeconds / 86400)}h yang lalu`;
-    return date.toLocaleDateString('id-ID', { month: 'short', day: 'numeric' });
+  /**
+   * Parse timestamp defensively: ISO dengan 'Z' atau offset sudah explicit
+   * → aman. ISO tanpa zona (legacy SQLite CURRENT_TIMESTAMP "YYYY-MM-DD
+   * HH:MM:SS") → treat sebagai UTC, bukan local, supaya `diffSeconds`
+   * akurat lintas zona waktu. Backend sekarang sudah men-serialize ke UTC.
+   * Tapi sebelum restart, response lama masih TZ-naive; parser ini bikin
+   * UI tetap benar pada cache browser.
+   */
+  const parseTimestamp = (input) => {
+    if (input instanceof Date) return input;
+    if (typeof input !== 'string') return new Date(input);
+    const s = input.trim();
+    if (!s) return new Date(NaN);
+    // Sudah ada zona (Z atau ±HH:MM) → aman.
+    if (/Z$|[+-]\d{2}:?\d{2}$/.test(s)) return new Date(s);
+    // Bentuk "YYYY-MM-DD HH:MM:SS" tanpa zona → treat sebagai UTC.
+    if (s.includes(' ') && !s.includes('T')) return new Date(s.replace(' ', 'T') + 'Z');
+    // ISO date-only atau ISO tanpa zona → suffix Z.
+    return new Date(s + 'Z');
   };
 
-  const renderAvatar = (name, gender) => {
-    const initial = (name ?? '?').charAt(0).toUpperCase();
+  /**
+   * Format timestamp → string relative-time Indonesia.
+   * Granularity penuh: detik, menit, jam, hari, minggu, bulan, tahun.
+   * Output tetap valid untuk range pendek sampai panjang ("Baru saja" < 10s,
+   * "1 detik yang lalu" sampai "5 tahun yang lalu"). Pure function — tidak
+   * membaca Date.now() di luar call site supaya aman untuk live-update ticker.
+   */
+  const formatRelativeDate = (input) => {
+    const date = parseTimestamp(input);
+    const ts = date.getTime();
+    if (Number.isNaN(ts)) return '';
+    const diffSeconds = Math.max(0, Math.floor((Date.now() - ts) / 1000));
+    if (diffSeconds < 10) return 'Baru saja';
+    if (diffSeconds < 60) {
+      // 1..59 detik → "X detik yang lalu" untuk single detik,
+      // "Beberapa detik yang lalu" untuk 10-59 (avoid "12 detik yang lalu" yang
+      // terasa campur aduk dengan "Baru saja"). Kita tetap granular sesuai
+      // permintaan user (1 detik, 2 detik, dst).
+      return `${diffSeconds} detik yang lalu`;
+    }
+    if (diffSeconds < 3600) {
+      const m = Math.floor(diffSeconds / 60);
+      return `${m} menit yang lalu`;
+    }
+    if (diffSeconds < 86400) {
+      const h = Math.floor(diffSeconds / 3600);
+      return `${h} jam yang lalu`;
+    }
+    if (diffSeconds < 604800) {
+      const d = Math.floor(diffSeconds / 86400);
+      return `${d} hari yang lalu`;
+    }
+    if (diffSeconds < 2592000) {
+      const w = Math.floor(diffSeconds / 604800);
+      return `${w} minggu yang lalu`;
+    }
+    if (diffSeconds < 31536000) {
+      const mo = Math.floor(diffSeconds / 2592000);
+      return `${mo} bulan yang lalu`;
+    }
+    const y = Math.floor(diffSeconds / 31536000);
+    return `${y} tahun yang lalu`;
+  };
+
+  /**
+   * Live-update ticker: setiap 30 detik scan semua <time data-timestamp>
+   * yang ada di storiesList dan update text content-nya. Tidak rebuild HTML —
+   * hanya text mutation supaya tidak flicker.
+   */
+  let _timeTickerId = null;
+  const startTimeTicker = () => {
+    if (_timeTickerId) clearInterval(_timeTickerId);
+    _timeTickerId = setInterval(() => {
+      const nodes = document.querySelectorAll('#storiesList time[data-relative-timestamp]');
+      nodes.forEach((node) => {
+        const iso = node.getAttribute('data-relative-timestamp');
+        if (!iso) return;
+        node.textContent = formatRelativeDate(iso);
+      });
+    }, 30000);
+  };
+  const stopTimeTicker = () => {
+    if (_timeTickerId) clearInterval(_timeTickerId);
+    _timeTickerId = null;
+  };
+
+  // Resolve dan validasi avatar URL dengan pola yang sama seperti story.page.
+  const isAvatarEnabled = (story) => {
+    const enabled = story.avatar_enabled === 1 || story.avatar_enabled === true;
+    const url = (story.avatar_url ?? '').toString().trim();
+    if (!enabled || !url) return false;
+    return /^https?:\/\//i.test(url) && url.length <= 2048;
+  };
+  const escHtmlAttr = (s) => String(s ?? '').replace(/[&"'<>]/g, (c) => ({ '&': '&amp;', '"': '&quot;', "'": '&#39;', '<': '&lt;', '>': '&gt;' }[c]));
+  const initialLetter = (name) => (name ?? '?').toString().charAt(0).toUpperCase();
+
+  const renderAvatar = (story) => {
+    const name = story?.ai_name ?? '?';
+    const initial = initialLetter(name);
+    if (isAvatarEnabled(story)) {
+      return `
+        <div class="relative flex-shrink-0">
+          <img src="${escHtmlAttr(story.avatar_url)}" alt="${escHtmlAttr(name)}" class="w-14 h-14 sm:w-16 sm:h-16 rounded-full object-cover bg-gradient-to-br from-theme-accent/20 to-theme-accent/5 border border-theme-accent/20 shadow-sm" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'w-14 h-14 sm:w-16 sm:h-16 rounded-full bg-gradient-to-br from-theme-accent/20 to-theme-accent/5 border border-theme-accent/20 flex items-center justify-center text-theme-accent font-bold text-xl sm:text-2xl shadow-sm',textContent:'${initial}'}))" />
+        </div>
+      `;
+    }
+    const gender = story?.ai_gender;
     const genderIcon = gender === 'female' ? 'female' : gender === 'male' ? 'male' : 'person';
     return `
       <div class="relative flex-shrink-0">
@@ -199,21 +294,26 @@ document.addEventListener('DOMContentLoaded', async () => {
 
       storiesList.classList.remove('hidden');
       storiesList.innerHTML = stories.map((story) => {
-        const timeLabel = formatRelativeDate(story.updated_at);
-        const aiGender = story.ai_gender ?? 'neutral';
+        // Pakai Date object langsung — aman untuk search berbeda TZ/SQLite
+        // ISO string yang tanpa 'Z' suffix.
+        const parsedDate = new Date(story.updated_at);
+        const timeLabel = formatRelativeDate(parsedDate);
         const userGender = story.user_gender ?? 'neutral';
         const aiPersonality = (story.ai_personality ?? '').trim() || 'Tidak ada deskripsi';
         const languageStyle = (story.language_style ?? 'custom').trim();
         const userName = (story.user_name ?? 'Kamu').trim();
 
+        // data-relative-timestamp = ISO original dari server; ticker baca
+        // attribute ini setiap 30 detik supaya label selalu fresh tanpa
+        // re-render seluruh list.
         return `
           <article class="session-card group relative" data-id="${story.id}" aria-label="Sesi roleplay dengan ${story.ai_name}">
             <div class="flex items-center gap-4 cursor-pointer" data-open="${story.id}">
-              ${renderAvatar(story.ai_name, aiGender)}
+              ${renderAvatar(story)}
               <div class="flex-1 min-w-0">
                 <div class="flex items-start justify-between gap-3 mb-1">
                   <h3 class="text-base sm:text-lg font-bold text-theme-text truncate group-hover:text-theme-accent transition-colors">${story.ai_name}</h3>
-                  <time class="text-[11px] sm:text-xs font-medium text-theme-muted whitespace-nowrap bg-theme-hover px-2 py-0.5 rounded-full border border-theme-border/50" datetime="${story.updated_at}">${timeLabel}</time>
+                  <time class="text-[11px] sm:text-xs font-medium text-theme-muted whitespace-nowrap bg-theme-hover px-2 py-0.5 rounded-full border border-theme-border/50" datetime="${story.updated_at}" data-relative-timestamp="${story.updated_at}">${timeLabel}</time>
                 </div>
                 <p class="text-sm text-theme-muted truncate mb-2">${userName} &bull; ${aiPersonality}</p>
                 <div class="flex flex-wrap items-center gap-2">
@@ -222,8 +322,8 @@ document.addEventListener('DOMContentLoaded', async () => {
                     <span class="capitalize">${languageStyle}</span>
                   </span>
                   <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-theme-hover text-theme-muted border border-theme-border/50">
-                    <span class="material-icons-round text-[12px]">${aiGender === 'female' ? 'female' : 'male'}</span>
-                    <span>AI ${aiGender}</span>
+                    <span class="material-icons-round text-[12px]">${story.ai_gender === 'female' ? 'female' : 'male'}</span>
+                    <span>AI ${story.ai_gender ?? 'neutral'}</span>
                   </span>
                   <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-theme-hover text-theme-muted border border-theme-border/50">
                     <span class="material-icons-round text-[12px]">${userGender === 'female' ? 'female' : 'male'}</span>
@@ -249,8 +349,13 @@ document.addEventListener('DOMContentLoaded', async () => {
       console.error('Failed to load stories', err);
       storiesSkeleton.classList.add('hidden');
       showError('Gagal memuat daftar sesi. Silakan refresh halaman.');
+    } finally {
+      // Tick不论 sukses/gagal — start supaya label fresh tiap 30s.
+      startTimeTicker();
     }
   };
+  // Stop ticker saat user navigating away supaya tidak jalan terus-menerus.
+  window.addEventListener('pagehide', stopTimeTicker);
 
   createStoryForm.addEventListener('submit', async (e) => {
     e.preventDefault();
