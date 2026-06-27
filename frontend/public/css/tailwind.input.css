@@ -5,35 +5,55 @@
 @layer base {
   :root[data-theme="dark"] {
     color-scheme: dark;
-    --theme-bg: 23 21 18;       /* warm charcoal #171512 */
-    --theme-surface: 32 28 24;  /* parchment-dark #201c18 */
-    --theme-text: 244 237 226;  /* warm cream #f4ede2 */
-    --theme-muted: 168 159 145; /* warm stone #a89f91 */
-    --theme-accent: 214 157 85; /* amber-gold #d69d55 */
-    --theme-hover: 42 37 32;    /* warm panel #2a2520 */
-    --theme-border: 55 49 43;   /* soft border #37312b */
+    --theme-bg: 23 21 18;
+    /* warm charcoal #171512 */
+    --theme-surface: 32 28 24;
+    /* parchment-dark #201c18 */
+    --theme-text: 244 237 226;
+    /* warm cream #f4ede2 */
+    --theme-muted: 168 159 145;
+    /* warm stone #a89f91 */
+    --theme-accent: 214 157 85;
+    /* amber-gold #d69d55 */
+    --theme-hover: 42 37 32;
+    /* warm panel #2a2520 */
+    --theme-border: 55 49 43;
+    /* soft border #37312b */
   }
 
   :root[data-theme="light"] {
     color-scheme: light;
-    --theme-bg: 252 248 241;    /* warm parchment #fcf8f1 */
-    --theme-surface: 255 253 248; /* off-white surface #fffdf8 */
-    --theme-text: 44 41 36;     /* warm ink #2c2924 */
-    --theme-muted: 120 109 95;  /* warm brown #786d5f */
-    --theme-accent: 174 106 26; /* amber leather #ae6a1a */
-    --theme-hover: 240 232 220; /* warm beige #f0e8dc */
-    --theme-border: 228 217 202; /* parchment border #e4d9ca */
+    --theme-bg: 252 248 241;
+    /* warm parchment #fcf8f1 */
+    --theme-surface: 255 253 248;
+    /* off-white surface #fffdf8 */
+    --theme-text: 44 41 36;
+    /* warm ink #2c2924 */
+    --theme-muted: 120 109 95;
+    /* warm brown #786d5f */
+    --theme-accent: 174 106 26;
+    /* amber leather #ae6a1a */
+    --theme-hover: 240 232 220;
+    /* warm beige #f0e8dc */
+    --theme-border: 228 217 202;
+    /* parchment border #e4d9ca */
   }
 
   :root[data-theme="child"] {
     color-scheme: light;
-    --theme-bg: 254 252 232;   /* yellow-50 */
+    --theme-bg: 254 252 232;
+    /* yellow-50 */
     --theme-surface: 255 255 255;
-    --theme-text: 69 26 3;     /* amber-900 */
-    --theme-muted: 146 64 14;  /* amber-700 */
-    --theme-accent: 217 119 6; /* amber-600 */
-    --theme-hover: 254 240 138;/* yellow-200 */
-    --theme-border: 253 224 71;/* yellow-300 */
+    --theme-text: 69 26 3;
+    /* amber-900 */
+    --theme-muted: 146 64 14;
+    /* amber-700 */
+    --theme-accent: 217 119 6;
+    /* amber-600 */
+    --theme-hover: 254 240 138;
+    /* yellow-200 */
+    --theme-border: 253 224 71;
+    /* yellow-300 */
   }
 
   body {
@@ -51,12 +71,15 @@
   .surface-panel {
     @apply bg-theme-surface shadow-sm transition-all duration-300 border border-theme-border rounded-2xl;
   }
+
   .glass-panel {
     @apply bg-theme-surface/80 backdrop-blur-xl transition-all duration-300 border-b border-theme-border;
   }
+
   .input-field {
     @apply w-full bg-theme-hover/50 border border-theme-border/50 rounded-xl px-4 py-3 text-sm text-theme-text placeholder-theme-muted focus:outline-none focus:ring-2 focus:ring-theme-accent/30 focus:border-theme-accent focus:bg-theme-surface transition-all duration-200;
   }
+
   .btn-primary {
     @apply inline-flex items-center justify-center bg-theme-accent text-white font-semibold rounded-xl px-5 py-3 hover:scale-[1.02] active:scale-[0.98] transition-transform shadow-md shadow-theme-accent/20;
   }
@@ -65,7 +88,8 @@
   .reading-progress {
     @apply h-[3px] bg-theme-accent/20 fixed top-0 left-0 right-0 z-[60];
   }
-  .reading-progress > .reading-progress-bar {
+
+  .reading-progress>.reading-progress-bar {
     @apply h-full bg-gradient-to-r from-theme-accent to-theme-accent/70 transition-all duration-150;
     width: 0%;
   }
@@ -74,9 +98,11 @@
   .reading-toolbar {
     @apply sticky top-0 z-40 transition-all duration-300 border-b border-theme-border/40 bg-theme-surface/90 backdrop-blur-xl;
   }
+
   .reading-mode .reading-toolbar {
     @apply fixed top-0 left-0 right-0 opacity-0 hover:opacity-100;
   }
+
   .reading-mode .reading-toolbar.is-visible {
     @apply opacity-100;
   }
@@ -85,9 +111,11 @@
   .tool-btn {
     @apply p-2 rounded-xl text-theme-muted hover:text-theme-text hover:bg-theme-hover transition-all duration-200 flex items-center justify-center;
   }
+
   .tool-btn.active {
     @apply bg-theme-accent/10 text-theme-accent;
   }
+
   .tool-btn:disabled {
     @apply opacity-40 cursor-not-allowed;
   }
@@ -96,18 +124,23 @@
   body.is-reading-mode header {
     @apply hidden;
   }
+
   body.is-reading-mode #readingToolbar {
     @apply flex;
   }
+
   body.is-reading-mode #chatContainer {
     @apply px-4 sm:px-8 lg:px-16 pt-6 pb-32;
   }
+
   body.is-reading-mode #chatList {
     @apply max-w-3xl mx-auto;
   }
+
   body.is-reading-mode footer {
     @apply hidden;
   }
+
   body.is-reading-mode main {
     @apply bg-theme-bg;
   }
@@ -116,12 +149,15 @@
   .msg-ai-block {
     @apply flex gap-4 max-w-[92%] sm:max-w-[85%] md:max-w-[78%];
   }
+
   .msg-ai-block .avatar {
     @apply w-9 h-9 sm:w-10 sm:h-10 rounded-full bg-theme-surface flex-shrink-0 flex items-center justify-center font-serif font-bold text-base sm:text-lg text-theme-accent shadow-sm border border-theme-border/40;
   }
+
   .msg-ai-block .msg-author {
     @apply text-xs font-semibold tracking-wide text-theme-muted mb-1 pl-1 uppercase;
   }
+
   .msg-ai-block .msg-content {
     @apply px-4 py-3 sm:px-5 sm:py-4 bg-theme-surface border-l-[3px] border-theme-accent rounded-r-2xl rounded-bl-2xl text-theme-text shadow-sm font-serif text-[15px] sm:text-base leading-[1.7] tracking-[0.01em] min-w-0;
   }
@@ -129,9 +165,11 @@
   .msg-user-block {
     @apply flex flex-col items-end max-w-[85%] sm:max-w-[75%] md:max-w-[65%];
   }
+
   .msg-user-block .msg-content {
     @apply inline-block px-3 py-1.5 bg-theme-hover/70 text-theme-text rounded-2xl rounded-tr-md text-sm sm:text-[14px] leading-snug break-words whitespace-pre-wrap min-w-0 font-sans border border-theme-border/30;
   }
+
   .msg-user-block .msg-time {
     @apply text-[10px] text-theme-muted mt-1.5 opacity-0 group-hover:opacity-100 transition-opacity pr-1;
   }
@@ -140,11 +178,13 @@
   .msg-entrance {
     animation: msg-enter 0.4s cubic-bezier(0.22, 1, 0.36, 1) forwards;
   }
+
   @keyframes msg-enter {
     from {
       opacity: 0;
       transform: translateY(16px);
     }
+
     to {
       opacity: 1;
       transform: translateY(0);
@@ -155,38 +195,56 @@
   .prose-story .msg-content p {
     @apply mb-4 last:mb-0;
   }
+
   .prose-story .msg-content strong {
     @apply font-semibold text-theme-text;
   }
+
   .prose-story .msg-content em,
   .prose-story .msg-content i {
     @apply italic text-theme-muted;
   }
+
   .prose-story .msg-content blockquote {
     @apply border-l-2 border-theme-accent/50 pl-4 italic text-theme-muted my-4;
   }
+
   .prose-story .msg-content h1,
   .prose-story .msg-content h2,
   .prose-story .msg-content h3,
   .prose-story .msg-content h4 {
     @apply font-serif font-semibold text-theme-text mt-6 mb-3;
   }
-  .prose-story .msg-content h1 { @apply text-2xl; }
-  .prose-story .msg-content h2 { @apply text-xl; }
-  .prose-story .msg-content h3 { @apply text-lg; }
+
+  .prose-story .msg-content h1 {
+    @apply text-2xl;
+  }
+
+  .prose-story .msg-content h2 {
+    @apply text-xl;
+  }
+
+  .prose-story .msg-content h3 {
+    @apply text-lg;
+  }
+
   .prose-story .msg-content hr {
     @apply border-theme-border/50 my-6;
   }
+
   .prose-story .msg-content ul,
   .prose-story .msg-content ol {
     @apply pl-5 my-4 space-y-1.5;
   }
+
   .prose-story .msg-content li {
     @apply mb-1;
   }
+
   .prose-story .msg-content a {
     @apply text-theme-accent underline decoration-theme-accent/30 hover:decoration-theme-accent transition-all;
   }
+
   .prose-story .msg-content code {
     @apply bg-theme-hover px-1.5 py-0.5 rounded text-xs font-mono text-theme-accent;
   }
@@ -195,6 +253,7 @@
   .tts-btn {
     @apply text-[10px] text-theme-muted hover:text-theme-accent transition-colors flex items-center gap-0.5;
   }
+
   .tts-btn.playing {
     @apply text-theme-accent;
   }
@@ -205,33 +264,282 @@
     width: 6px;
     height: 6px;
   }
+
   .scrollbar-thin::-webkit-scrollbar-track {
     background: transparent;
   }
+
   .scrollbar-thin::-webkit-scrollbar-thumb {
     @apply bg-theme-border rounded-full;
   }
+
   .scrollbar-thin::-webkit-scrollbar-thumb:hover {
     @apply bg-theme-muted;
   }
 
   /* Font size utility for dynamic reading scale */
-  .font-size-xs { font-size: 14px; }
-  .font-size-sm { font-size: 15px; }
-  .font-size-md { font-size: 16px; }
-  .font-size-lg { font-size: 17px; }
-  .font-size-xl { font-size: 18px; }
-  .font-size-2xl { font-size: 20px; }
-  .font-size-3xl { font-size: 22px; }
+  .font-size-xs {
+    font-size: 14px;
+  }
+
+  .font-size-sm {
+    font-size: 15px;
+  }
+
+  .font-size-md {
+    font-size: 16px;
+  }
+
+  .font-size-lg {
+    font-size: 17px;
+  }
+
+  .font-size-xl {
+    font-size: 18px;
+  }
+
+  .font-size-2xl {
+    font-size: 20px;
+  }
+
+  .font-size-3xl {
+    font-size: 22px;
+  }
 }
 
-/* Ensure chat bubbles shrink to text width while keeping paragraphs block-level for multi-line messages */
+/* ============================================================================
+   Chat bubble fixes (merged from previously-separate chat-fixes.css)
+   Letakkan plain CSS di LUAR @layer supaya menjadi cascade terakhir
+   dan `!important` di sini menang dari rule Tailwind @layer components
+   sebelumnya.
+   v4: pakai !important untuk poin-poin yang bentrok dengan compiled
+   Tailwind (.msg-user-block {display:flex; max-width:85%}). Akar masalah:
+   .msg-user-block adalah flex item di outer `<div class="flex w-full">`,
+   sehingga 'max-width: fit-content' TIDAK berlaku di flex item versi spec.
+   Fix: matikan flex dari .msg-user-block dan biarkan flow biasa supaya
+   shrink-wrap bekerja.
+   ============================================================================ */
+
+.msg-content {
+  width: fit-content;
+  max-width: 100%;
+}
+
+/* AI story panels: tetap lebar untuk readability */
+.msg-ai-block {
+  display: flex !important;
+  flex-direction: row !important;
+  gap: 1rem !important;
+  align-items: flex-start !important;
+  max-width: 92% !important;
+  min-width: 0 !important;
+}
+
+@media (min-width: 640px) {
+  .msg-ai-block {
+    max-width: 85% !important;
+  }
+}
+
+@media (min-width: 768px) {
+  .msg-ai-block {
+    max-width: 78% !important;
+  }
+}
+
+.msg-ai-block .msg-content {
+  display: block !important;
+  width: 100% !important;
+  max-width: 100% !important;
+  min-width: 0 !important;
+}
+
+.msg-ai-block .msg-content p {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  margin: 0 0 0.75em 0;
+}
+
+.msg-ai-block .msg-content p:last-child {
+  margin-bottom: 0;
+}
+
+/* USER bubble: keluar dari flex container di dalam `.flex.w-full.justify-end`
+   supaya anak bisa shrink-wrap ke ukuran teks. */
+.msg-user-block {
+  display: block !important;
+  flex: 0 1 auto !important;
+  flex-direction: column !important;
+  align-items: flex-end !important;
+  width: auto !important;
+  min-width: 0 !important;
+  max-width: min(360px, 75vw) !important;
+}
+
+.msg-user-block .msg-content {
+  display: inline-block !important;
+  width: auto !important;
+  max-width: 100% !important;
+  min-width: 0 !important;
+  padding: 0.3rem 0.7rem !important;
+  line-height: 1.25 !important;
+  white-space: pre-wrap !important;
+  word-break: break-word !important;
+  overflow-wrap: break-word !important;
+  border-radius: 0.875rem !important;
+  border-top-right-radius: 0.4rem !important;
+}
+
+.msg-user-block .msg-content p {
+  display: block;
+  width: auto;
+  max-width: 100%;
+  margin: 0;
+}
+
+.msg-user-block .msg-content p+p {
+  margin-top: 0.35em;
+}
+
+.msg-user-block .msg-content p:last-child {
+  margin-bottom: 0;
+}
+
+.msg-user-block .msg-time {
+  display: block !important;
+  text-align: right !important;
+  width: 100% !important;
+  max-width: 100% !important;
+}
+
+/* Reading-scale override (specificity 0,2,1 > 0,2,0 supaya slider menang). */
+.msg-ai-block .msg-content.font-size-active {
+  font-size: var(--reading-font-size, 16px) !important;
+}
+
+/* ============================================================================
+   TTS Toolbar: state-based show/hide untuk 5 action buttons.
+   Default = idle: hanya tombol play (volume_up icon) visible.
+   Loading: hourglass spinner visible, click disabled.
+   Playing: pause + stop visible.
+   Paused: resume (play_arrow) + stop visible.
+   Visibility: tampil saat parent bubble di-hover atau toolbar sedang aktif.
+   ============================================================================ */
+
+.tts-toolbar {
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 0.125rem !important;
+  opacity: 0;
+  transition: opacity 0.18s ease;
+  pointer-events: none;
+}
+
+.msg-ai-block:hover .tts-toolbar,
+.tts-toolbar[data-state="loading"],
+.tts-toolbar[data-state="playing"],
+.tts-toolbar[data-state="paused"] {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* Buttons base styling (apply layout to ALL 5 buttons) */
+.tts-toolbar .tts-btn,
+.tts-toolbar .tts-pause-btn,
+.tts-toolbar .tts-resume-btn,
+.tts-toolbar .tts-stop-btn {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  padding: 0.25rem !important;
+  border-radius: 9999px !important;
+  color: rgb(var(--theme-muted)) !important;
+  transition: all 0.15s ease !important;
+  background: transparent !important;
+  border: none !important;
+  cursor: pointer !important;
+  min-width: 28px !important;
+  height: 28px !important;
+}
+
+.tts-toolbar .tts-btn:hover:not([disabled]),
+.tts-toolbar .tts-pause-btn:hover,
+.tts-toolbar .tts-resume-btn:hover,
+.tts-toolbar .tts-stop-btn:hover {
+  background-color: rgb(var(--theme-hover)) !important;
+  color: rgb(var(--theme-accent)) !important;
+  transform: scale(1.08);
+}
+
+/* State machine — 4 state × 5 buttons */
+.tts-toolbar[data-state="idle"] [data-action="play"] {
+  display: inline-flex !important;
+}
+
+.tts-toolbar[data-state="idle"] [data-action="loading"],
+.tts-toolbar[data-state="idle"] [data-action="pause"],
+.tts-toolbar[data-state="idle"] [data-action="resume"],
+.tts-toolbar[data-state="idle"] [data-action="stop"] {
+  display: none !important;
+}
+
+.tts-toolbar[data-state="loading"] [data-action="loading"] {
+  display: inline-flex !important;
+  pointer-events: none;
+  cursor: wait;
+  color: rgb(var(--theme-accent)) !important;
+}
+
+.tts-toolbar[data-state="loading"] [data-action="play"],
+.tts-toolbar[data-state="loading"] [data-action="pause"],
+.tts-toolbar[data-state="loading"] [data-action="resume"],
+.tts-toolbar[data-state="loading"] [data-action="stop"] {
+  display: none !important;
+}
+
+.tts-toolbar[data-state="playing"] [data-action="pause"],
+.tts-toolbar[data-state="playing"] [data-action="stop"] {
+  display: inline-flex !important;
+}
+
+.tts-toolbar[data-state="playing"] [data-action="play"],
+.tts-toolbar[data-state="playing"] [data-action="loading"],
+.tts-toolbar[data-state="playing"] [data-action="resume"] {
+  display: none !important;
+}
+
+.tts-toolbar[data-state="paused"] [data-action="resume"],
+.tts-toolbar[data-state="paused"] [data-action="stop"] {
+  display: inline-flex !important;
+}
+
+.tts-toolbar[data-state="paused"] [data-action="play"],
+.tts-toolbar[data-state="paused"] [data-action="loading"],
+.tts-toolbar[data-state="paused"] [data-action="pause"] {
+  display: none !important;
+}
+
+/* Spinning hourglass untuk loading state */
+.tts-toolbar .animate-spin {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Ensure chat bubbles shrink to text width while keeping paragraphs
+   block-level for multi-line messages. */
 .msg-content p {
   display: block;
   width: fit-content;
   max-width: 100%;
   margin: 0 0 0.75em 0;
 }
+
 .msg-content p:last-child {
   margin-bottom: 0;
 }

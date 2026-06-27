@@ -130,7 +130,7 @@ FictionFlow/
 │       └── middlewares/        # errorHandler, requestLogger
 └── frontend/                   # Vanilla JS + Tailwind (built, no build step)
     ├── public/                 # index.html, story.html, robots.txt
-    ├── css/                    # tailwind.input.css + tailwind.output.css + chat-fixes.css
+    ├── css/                    # tailwind.input.css (source) + tailwind.output.css (built)
     ├── js/
     │   ├── api/                # apiClient.js (REST + synthesizeTts)
     │   ├── core/               # ttsQueueManager, eventBus, themeManager, api
