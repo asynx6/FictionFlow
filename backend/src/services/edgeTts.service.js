@@ -352,7 +352,10 @@ export async function warmup() {
       warmupText('Halo, saya siap membantu Anda.', DEFAULT_VOICE_FEMALE_EN),
     ]);
     console.log(`[tts] warmed 4 voices in ${Date.now() - start}ms`);
-  })();
+  })().catch((err) => {
+    console.warn('[tts] warmup all gagal:', err.message);
+    warmupPromise = null; // reset agar retry berikutnya attempt fresh
+  });
   return warmupPromise;
 }
 

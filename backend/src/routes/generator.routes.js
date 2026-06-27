@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { env } from '../config/env.js';
 import { HttpError } from '../middlewares/errorHandler.js';
 import { chatCompletionOnce } from '../services/modelProvider.service.js';
+import { stripReasoningContent } from '../util/text.js';
 
 const router = Router();
 
@@ -34,19 +35,6 @@ Aturan:
 3. Jika user tidak menyebutkan gender, default AI perempuan dan user laki-laki.
 4. Buat karakter yang menarik dan koheren dengan prompt user.
 5. Jangan mengarang fakta di luar prompt yang tidak masuk akal.`;
-
-function stripReasoningContent(text) {
-  if (typeof text !== 'string') return text;
-  const tags = ['ctrl32', 'think', 'reasoning', 'thought', 'analysis'];
-  let cleaned = text;
-  for (const tag of tags) {
-    cleaned = cleaned.replace(new RegExp(`<${tag}[^>]*>[\\s\\S]*?<\\/${tag}>`, 'gi'), '');
-    cleaned = cleaned.replace(new RegExp(`<\\/${tag}>`, 'gi'), '');
-  }
-  cleaned = cleaned.replace(/<ctrl32>.*?<\/ctrl32>/gi, '');
-  cleaned = cleaned.replace(/<ctrl32>/gi, '');
-  return cleaned;
-}
 
 function extractJsonBlock(text) {
   // Look for a JSON object between fences or as standalone

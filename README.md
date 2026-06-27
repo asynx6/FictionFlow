@@ -1,32 +1,52 @@
 # FictionFlow
 
-> Platform interaktif roleplay novel berbasis AI. Single-user, self-hosted, hemat RAM. Hybrid TTS via Microsoft Edge TTS (`edge-tts-universal` v1.4.0, Chrome 143 + MUID cookie auth — migrasi dari `@lixen/edge-tts` yang 403 setelah token rotation Feb 2026), 2-pack `id-ID`/`en-US` × male/female = 4 Neural voices + prosody 4-tuple `(type × gender)` untuk naturalisasi narasi + Web Speech API fallback (browser).
+> Platform roleplay interaktif berbasis AI. Single-user, self-hosted, hemat RAM. Chat streaming real-time dengan TTS multi-voice dan long-term memory.
 
-## ✨ Fitur
-
-- 🎭 **Long-Term Memory** — AI tidak pernah lupa fakta inti cerita (nama, sifat, gaya bahasa, target ending)
-- 🧠 **Short-Term Memory** — Hanya N pertukaran terakhir yang dikirim ke AI, hemat token untuk cerita panjang
-- 🔄 **Two-Tier Memory Engine** — Sesuai spec di `docs/FictionFlow.md` Bab 6
-- 🎙️ **Hybrid Multi-Voice TTS** — Server-synthesize via `edge-tts-universal` v1.4.0 (4 Neural voices: `id-ID-ArdiNeural`, `id-ID-GadisNeural`, `en-US-GuyNeural`, `en-US-JennyNeural`) + browser Web Speech fallback. **Prosody 4-tuple** `(type × gender)` → dialog female `+8%/+3Hz`, dialog male `+5%/+2Hz`, narration female `-2%/+1Hz`, narration male `-3%/+0Hz` — variasi ekspresi natural tanpa V2 voice (Indonesian Neural cuma 2 varian: Ardi+Gadis, tidak ada cheerful/serious). 2 voice pack pilihan user di Story settings. Backend emit `audio_segments[]` JSON + `gender` whitelist resolver (lowercase English exact, fallback ke `story.ai_gender`, default male), frontend queue manager play/cancel/skip + B6 SPA-replay-safe cache lifecycle
-- 🛡️ **Crash-safe** — `process.once('uncaughtException')` race-pattern di service + filter di `server.js` agar 403 dari Microsoft endpoint tidak membunuh server
-- 🎯 **Gender fidelity** — Whitelist-based gender resolver di controller + tightened prompter rule (no `perempuan`/`wanita`/`laki`/`cewek` Indonesian coercion → silent-fallback male lama) + Story-Identity consultation rule untuk AI/User speaker. End-to-end: Luna character female → GadisNeural bukan ArdiNeural lagi
-- 📡 **Streaming Chat (SSE)** — Token demi token, tidak nunggu sampai selesai
-- 🔌 **Pluggable Model Provider** — OpenRouter / 9Router / OpenAI-compatible lain
-- 🗄️ **SQLite Lokal + Cache TTS** — Semua cerita dan riwayat tersimpan di `data/fictionflow.sqlite`; `message_tts` cache untuk replay segment
+<img src="docs/img/image1.png" alt="Dashboard FictionFlow" width="100%" />
 
 ---
 
-## 🚀 Quick Start (1 Perintah, Tinggal Pakai)
+## ✨ Fitur Utama
+
+| Fitur | Deskripsi |
+|---|---|
+| 🧠 **Two-Tier Memory** | Long-term (`dynamic_memory`, fakta inti cerita) + Short-term (N pesan terakhir ke LLM). AI tidak pernah lupa nama, sifat, atau target ending. |
+| 📡 **Streaming Chat (SSE)** | Token demi token via event chain `meta` → `token`*N → `done`, abortable. |
+| 🎙️ **Hybrid Multi-Voice TTS** | 4 Neural voices Microsoft Edge TTS (`id-ID-ArdiNeural/GadisNeural`, `en-US-GuyNeural/JennyNeural`) + prosody 4-tuple `(type × gender)` + Web Speech fallback. |
+| 🛑 **Stop + Rollback** | Abort SSE, hapus bubble user+AI, restore teks ke chatbar, rollback atomik ke DB. |
+| 🎨 **3 Tema** | `dark` / `light` / `coffee` (warm latte). |
+| 🔌 **Pluggable Provider** | OpenRouter / 9Router / OpenAI-compatible. |
+| 🔤 **Font Customization** | 6 font families (`serif`, `lora`, `slab`, `nunito`, `sans`, `system`) + adjustable size (14–22px) per story. |
+| 📖 **Reading Mode** | Immersive view tanpa toolbar, toggle on/off per story. |
+| 🖼️ **Avatar Profile** | Custom URL avatar + preview, enable/disable toggle, fallback ke initial huruf. |
+| 📱 **PWA Ready** | Service worker (cache-first + stale-while-revalidate), manifest, icon 192/512. |
+| 🤖 **Character Generator** | Auto-derive nama, kepribadian, gaya bahasa, dan target ending dari prompt singkat. |
+| 🛡️ **Crash-safe** | `uncaughtException` filter — 403 dari Microsoft TTS endpoint tidak membunuh server. |
+
+---
+
+## 📸 Screenshots
+
+<div align="center">
+  <img src="docs/img/image1.png" alt="Dashboard" width="32%" />
+  <img src="docs/img/image2.png" alt="Chat Story" width="32%" />
+  <img src="docs/img/image3.png" alt="Settings & Memory" width="32%" />
+  <br/><sub>Dashboard · Chat Story dengan TTS toolbar · Settings drawer & memory manager</sub>
+</div>
+
+---
+
+## 🚀 Quick Start
 
 ### Prasyarat
 
 - **Node.js ≥ 18** ([download](https://nodejs.org))
-- API key dari **OpenRouter** ([https://openrouter.ai](https://openrouter.ai)) — atau provider OpenAI-compatible lain (9Router lokal, dll)
+- API key dari **OpenRouter** ([openrouter.ai](https://openrouter.ai)) — atau provider OpenAI-compatible lain
 
-### Windows (PowerShell)
+### Windows
 
 ```powershell
-cd c:\Users\Beni\Downloads\FictionFlow
+cd C:\Users\Beni\Downloads\FictionFlow
 .\run.ps1
 ```
 
@@ -34,61 +54,22 @@ cd c:\Users\Beni\Downloads\FictionFlow
 
 ```bash
 cd /path/to/FictionFlow
-chmod +x run.sh
-./run.sh
+chmod +x run.sh && ./run.sh
+# atau: bash run.sh
 ```
 
-**Atau tanpa chmod** (jika `Permission denied`):
-
-```bash
-bash run.sh
-```
-
-> ℹ️ Script akan otomatis: install dependencies, copy `backend/.env.example` ke `backend/.env` jika belum ada, lalu **berhenti dan minta kamu mengisi API key** di Notepad/nano. Setelah diisi, jalankan ulang script yang sama.
-
-### Alur kerja
-
-```
-Jalankan run.sh / run.ps1
-        │
-        ▼
-  ┌──────────────┐
-  │  Install deps│ (skip jika sudah ada)
-  └──────┬───────┘
-         ▼
-  ┌──────────────┐
-  │ Bootstrap    │ Copy backend/.env.example → backend/.env
-  │ .env         │ (skip jika sudah ada)
-  └──────┬───────┘
-         ▼
-  ┌──────────────┐
-  │ Cek API key  │── placeholder? ─▶ STOP, minta user edit
-  └──────┬───────┘ (sk-xxx/xxxx)
-         ▼
-  ┌──────────────┐
-  │ Start server │ Backend (port 3000) + Frontend (static via Express)
-  └──────────────┘
-         ▼
-  Buka http://localhost:3000 → 🎭
-```
-
-Buka browser: **http://localhost:3000** 🎉
-
-> ℹ️ Pada start pertama, folder `data/` dan file `fictionflow.sqlite` akan otomatis dibuat, semua tabel di-bootstrap (`stories`, `messages`, `message_facts`, `message_tts`).
+> Script otomatis: install deps → copy `.env.example` → cek API key → build CSS → start server. Buka **http://localhost:3000**.
 
 ---
 
-## 🧩 Scripts Alternatif (Tanpa run.sh / run.ps1)
+## 🧩 Scripts Manual
 
-Kalau kamu lebih suka manual / untuk development:
-
-| Perintah | Fungsi |
-|---|---|
-| `npm install --prefix backend` | Install dependency backend saja |
-| `npm start --prefix backend` | Jalankan backend tanpa script helper |
-| `npm run dev --prefix backend` | Backend dengan auto-reload (`node --watch`) |
-| `npm run build:css --prefix frontend` | Rebuild `tailwind.output.css` (kalau ubah `tailwind.input.css`) |
-| `node scratch/smoke.mjs` | End-to-end smoke test (perlu server jalan di PORT lain) |
+```bash
+npm install --prefix backend          # Install backend deps
+npm start --prefix backend            # Production start
+npm run dev --prefix backend          # Dev mode (auto-reload, node --watch)
+npm run build:css --prefix frontend   # Rebuild tailwind.output.css
+```
 
 ---
 
@@ -96,150 +77,218 @@ Kalau kamu lebih suka manual / untuk development:
 
 ```
 FictionFlow/
-├── run.sh                      # Quick start (Linux/macOS/WSL/Git Bash)
-├── run.ps1                     # Quick start (Windows PowerShell)
-├── package.json                # Metadata + orchestrator
-├── README.md                   # File ini
-├── data/                       # SQLite auto-generated di sini
+├── run.sh / run.ps1              # Quick start scripts
+├── README.md                     # File ini
+├── LICENSE                       # MIT
+├── GEMINI.md                     # Gemini CLI config
+├── data/                         # SQLite db auto-generated (gitignored)
 ├── docs/
-│   ├── FictionFlow.md          # Spesifikasi lengkap (Bab 1-17)
-│   ├── task.md                 # Task tracker internal
-│   └── superpowers/            # Specs + plans post-audit
-│       ├── specs/              # Design specs (YYYY-MM-DD-*.md)
-│       └── plans/              # Implementation plans
-├── tests/                      # Regression / E2E scripts
-│   ├── fictionflow-chat.spec.js  # Playwright persistence E2E
-│   ├── test-chat-endpoint.mjs    # Manual endpoint probe
-│   ├── test-provider.mjs         # Model provider smoke
-│   └── test-story-stream.mjs     # SSE stream smoke
-├── scratch/                    # One-off scripts & debug snapshots (not production)
-│   ├── smoke.mjs               # End-to-end smoke
-│   ├── visual-test.js          # Playwright visual screenshot harness
-│   └── test_*.ps1 / test_*.mjs # Misc helpers
-├── backend/                    # Node.js + Express + SQLite
-│   ├── package.json            # + @lixen/edge-tts
-│   ├── .env.example            # Template env
+│   ├── FictionFlow.md            # Spesifikasi lengkap (Bab 1–17)
+│   ├── task.md                   # Task tracker
+│   └── img/                      # Screenshots README
+├── tests/                        # E2E & smoke test suite
+│   ├── fictionflow-chat.spec.js
+│   ├── test-chat-endpoint.mjs
+│   ├── test-provider.mjs
+│   └── test-story-stream.mjs
+├── scratch/                      # One-off scripts & debug
+│   ├── smoke.mjs                 # 13-endpoint E2E smoke
+│   └── visual-test.js
+│
+├── backend/                      # Node.js + Express + SQLite
+│   ├── package.json              # edge-tts-universal v1.4.0
+│   ├── .env.example
 │   └── src/
-│       ├── server.js           # Entry point (uncaughtException filter, no kill on TTS 403)
-│       ├── app.js              # Express wiring + static serve + /api mount
-│       ├── config/             # env loader, fallback models
-│       ├── db/                 # schema.sql (incl. message_tts), database.js, migrate.js
-│       ├── routes/             # stories, messages, models, tts
-│       ├── controllers/        # Business handlers
-│       ├── services/           # promptBuilder, memoryManager, modelProvider, edgeTts
-│       └── middlewares/        # errorHandler, requestLogger
-└── frontend/                   # Vanilla JS + Tailwind (built, no build step)
-    ├── public/                 # index.html, story.html, robots.txt
-    ├── css/                    # tailwind.input.css (source) + tailwind.output.css (built)
-    ├── js/
-    │   ├── api/                # apiClient.js (REST + synthesizeTts)
-    │   ├── core/               # ttsQueueManager, eventBus, themeManager, api
-    │   └── pages/              # story.page.js, dashboard.page.js
-    └── tailwind.config.js
+│       ├── server.js             # Entry point + crash filter
+│       ├── app.js                # Express wiring + static serve
+│       ├── config/               # env loader, fallback models
+│       │   ├── env.js
+│       │   └── fallbackModels.json
+│       ├── db/                   # schema.sql, database.js, migrate.js, seed.js
+│       ├── routes/               # stories, messages, models, tts, generator, voicePresets
+│       ├── controllers/          # stories, messages (streamChat SSE), models
+│       ├── services/             # promptBuilder (6-bagian), memoryManager, memoryExtractor,
+│       │                         # modelProvider, edgeTts (+ test)
+│       ├── middlewares/          # errorHandler (HttpError), requestLogger
+│       └── util/                 # text (stripReasoningContent), time (normalizeTimestamps)
+│
+└── frontend/                     # Vanilla JS + Tailwind (static, no bundler)
+    ├── tailwind.config.js
+    ├── package.json              # Tailwind build deps only
+    └── public/
+        ├── index.html            # Dashboard page
+        ├── story.html            # Story chat page
+        ├── robots.txt
+        ├── sw.js                 # Service worker (PWA)
+        ├── manifest.webmanifest  # PWA manifest
+        ├── css/
+        │   ├── tailwind.input.css   # Source (edit here)
+        │   └── tailwind.output.css  # Built (gitignored, wajib build:css)
+        └── js/
+            ├── api/
+            │   └── apiClient.js     # REST + SSE + TTS client (single source)
+            ├── core/
+            │   ├── eventBus.js      # Events constants + on/off/emit
+            │   ├── themeManager.js  # dark/light/coffee cycle singleton
+            │   ├── markdownRenderer.js  # markdown-it wrapper
+            │   ├── textUtils.js     # stripReasoningContent (shared)
+            │   ├── ttsEngine.js     # Web Speech API wrapper
+            │   └── ttsQueueManager.js   # Edge TTS queue + Audio playback + retry
+            ├── pages/
+            │   ├── dashboard.page.js    # Story list + create + character generator
+            │   └── story.page.js        # Chat UI + TTS toolbar + settings + memory
+            └── state/              # (reserved untuk future state management)
 ```
 
 ---
 
-## 🛠️ API Singkat
+## 🛠️ API Reference
 
-Base URL: `http://localhost:3000/api`
+Base: `http://localhost:3000/api`
 
-| Method | Path | Fungsi |
+### Health & Models
+
+| Method | Path | Deskripsi |
 |---|---|---|
-| `GET` | `/health` | Cek status server |
+| `GET` | `/health` | Status server |
 | `GET` | `/models` | Daftar model dari provider |
-| `POST` | `/generate/character` | Auto-derive user/AI name/personality dari prompt |
+
+### Character Generator
+
+| Method | Path | Body | Deskripsi |
+|---|---|---|---|
+| `POST` | `/generate/character` | `{prompt}` | Auto-derive karakter dari ide singkat |
+
+### Stories CRUD
+
+| Method | Path | Deskripsi |
+|---|---|---|
 | `POST` | `/stories` | Buat story baru |
 | `GET` | `/stories` | List semua story |
-| `GET` | `/stories/:id` | Detail satu story |
-| `PATCH` | `/stories/:id` | Edit title/premise/memory/model |
-| `DELETE` | `/stories/:id` | Soft-delete story |
-| `DELETE` | `/stories/:id/permanent` | Hard-delete story (cascade messages & tts cache) |
-| `GET` | `/stories/:id/messages` | Riwayat pesan |
-| `POST` | `/stories/:id/messages` | Kirim pesan → SSE stream balasan AI + `audio_segments[]` |
-| `POST` | `/tts` | Server-synthesize TTS `{"text","gender"}` → MP3 Blob |
+| `GET` | `/stories/:id` | Detail story |
+| `PATCH` | `/stories/:id` | Update (title, persona, model, avatar, font, voice, dll) |
+| `DELETE` | `/stories/:id` | Soft-delete (arsip) |
+| `DELETE` | `/stories/:id/permanent` | Hard-delete (cascade messages + TTS cache) |
+
+### Messages & Chat
+
+| Method | Path | Deskripsi |
+|---|---|---|
+| `GET` | `/stories/:id/messages` | Riwayat pesan (+ pagination `limit`/`offset`) |
+| `POST` | `/stories/:id/messages` | Kirim pesan → SSE stream (`meta` → `token`*N → `done`) |
+| `POST` | `/stories/:id/messages/fallback` | Fallback message saat provider error |
+| `DELETE` | `/stories/:id/messages/rollback` | Rollback atomik: hapus user+AI msg + TTS cache + restore memory |
+
+### TTS
+
+| Method | Path | Deskripsi |
+|---|---|---|
+| `GET` | `/stories/:id/messages/tts-latest` | TTS cache terbaru (pre-populate replay) |
+| `GET` | `/stories/:id/messages/:msgId/tts-cache` | TTS cache per message (owner check) |
+| `POST` | `/tts` | Synthesize `{text, voice?, gender?}` → audio/mpeg |
+| `POST` | `/tts/warmup` | Pre-warm TTS cache (fire-and-forget / blocking) |
+
+### Voice Presets
+
+| Method | Path | Deskripsi |
+|---|---|---|
+| `GET` | `/stories/:id/voice-presets` | List voice presets |
+| `PATCH` | `/stories/:id/voice-presets/:tag` | Update voice preset |
 
 ---
 
-## 🎙️ TTS & Audio
+## 🎙️ TTS & Audio System
 
-AI membalas dengan struktur hybrid melalui sistem **2 voice pack** (pengaturan user di Story settings):
+AI membalas dengan struktur hybrid via 2 voice pack:
 
-| Pack | Locale | Narration (male) | Dialogue female |
-|------|--------|------------------|-----------------|
-| Indonesian | `id-ID` | `id-ID-ArdiNeural` | `id-ID-GadisNeural` |
-| English (US) | `en-US` | `en-US-GuyNeural` | `en-US-JennyNeural` |
+| Pack | Locale | Narration (male) | Dialogue (female) |
+|---|---|---|---|
+| Indonesian | `id-ID` | `ArdiNeural` | `GadisNeural` |
+| English (US) | `en-US` | `GuyNeural` | `JennyNeural` |
 
-Pemilihan pack disimpan di `localStorage.fictionflow_voice_pack` (default `id-ID`). Pack user menang atas hint apapun dari LLM. Setiap dialog ditandai dengan gender karakter sehingga backend otomatis pilih voice yang sesuai.
-
-Backend emit SSE dengan field `audio_segments[]`:
+### SSE Response Format
 
 ```jsonc
 {
   "message_id": 17,
   "full_content": "Malam itu hujan turun perlahan...",
   "audio_segments": [
-    { "text": "Malam itu hujan turun perlahan...", "gender": "male",  "type": "narration", "voice_config": { "locale": "id-ID", "voice_name": "id-ID-ArdiNeural"  } },
-    { "text": "Kamu kenapa diam dari tadi?",        "gender": "female","type": "dialogue",  "voice_config": { "locale": "id-ID", "voice_name": "id-ID-GadisNeural" } }
+    { "text": "Malam itu...",       "gender": "male",   "type": "narration", "voice_config": {"locale":"id-ID","voice_name":"id-ID-ArdiNeural"} },
+    { "text": "Kamu kenapa diam?",  "gender": "female", "type": "dialogue",  "voice_config": {"locale":"id-ID","voice_name":"id-ID-GadisNeural"} }
   ],
   "used_fallback_parse": false
 }
 ```
 
-Pipeline:
-1. Backend `services/edgeTts.service.js` panggil `@lixen/edge-tts` per-segment → MP3 Blob. Hint dari LLM dinormalisasi (suffix `-Male`/`-Female` → `Neural`) sebelum dipakai; kalau tidak ada hint, suara dipilih berdasar `gender` + pack aktif dari request.
-2. Frontend `core/ttsQueueManager.js` fetch via `apiClient.synthesizeTts()` → `<audio>` element, Antrian + skip/abort/8s timeout. Voice di-resolve dari pack aktif + segment gender (sumber kebenaran tunggal di `edgeVoiceForPack`).
-3. Kalau EdgeTTS gagal (403 / network / 500 / hint tidak dikenal), fallback ke `window.speechSynthesis` per-segment di browser (lookup prefix-locale pack).
+### Pipeline
 
-Endpoint server-side `POST /api/tts` tersedia untuk replay/ujian manual (body: `{text, voice?, gender?}` → MP3 Buffer + header `X-Tts-Voice`). Sekarang menerima `voice` eksplisit (e.g. `id-ID-GadisNeural`) atau derivasi otomatis dari `gender`.
-
----
-
-## 🛡️ Stabilization (audit 2026-06-25)
-
-Codebase full-audit scan (34 files, 17 findings: 2H/6M/5L/4I, 0C). Semua High + Medium sudah landed:
-
-- **F1** Single-slot AI error dialog handlers (`story.page.js`)
-- **F2** Bound 5s fact-poll timer + pagehide clear (`story.page.js`)
-- **F3** `STORY_FIELD_MAX_LENGTH` enforced di `createStory` + `updateStory` (HttpError 413)
-- **F4** `MAX_MESSAGE_CONTENT=20000` cap di `POST /messages`
-- **F5** `_stashSegments`/`_readSegments` data-segments XSS guard
-- **F6** Structured error log di `memoryExtractor`
-- **F7** Delegated click di `dashboard.page.js` (no listener accumulation)
-- **F8** `EventBus.off(event, listener)` API
-
-Plus EdgeTTS crash mitigation dua layer:
-1. Service `process.once('uncaughtException')` + named `removeListener` di `finally` (`runSynthesize`)
-2. Filter `EdgeTTS|Unexpected server response` di `server.js` `uncaughtException`/`unhandledRejection` → no `exit(1)`
-
-Verified smoke `POST /api/tts {text:'Halo',gender:'female'}` → 500 JSON bersih, `GET /api/health` setelahnya 200, process hidup.
-
-LOW (5) + INFO (4) deferred — voice allowlist, dashboard escapeHtml, CDN SRI, prompt-injection framing, model_id whitelist, console.warn scrub, dead ternary, PRAGMA allowlist, unhandledRejection grace.
+1. **Backend** `edgeTts.service.js` — `edge-tts-universal` v1.4.0 (Chrome 143 + MUID cookie auth), per-segment synthesis, prosody 4-tuple `(type × gender)`, 8s timeout, retry with backoff
+2. **Frontend** `ttsQueueManager.js` — fetch via `apiClient.synthesizeTts()` → `<audio>` element, queue + skip/abort + 25s timeout + 3× retry + Blob URL lifecycle
+3. **Fallback** → `window.speechSynthesis` per-segment di browser
+4. **Cache** → `message_tts` table, replay tanpa re-synthesize, pre-populated saat load story
 
 ---
 
-## 🔐 Catatan Keamanan
+## 🛑 Stop Button & Rollback
 
-- `MODEL_PROVIDER_API_KEY` hanya di backend, tidak pernah dikirim ke browser.
-- Semua data cerita tersimpan lokal di SQLite — tidak ada cloud sync di MVP.
-- Single-user, tanpa login. Jika di-expose ke internet publik, tambahkan reverse-proxy (Caddy/Nginx) + basic auth.
-- Input limits: `MAX_MESSAGE_CONTENT=20000`, `STORY_FIELD_MAX_LENGTH` map per-field, body 1 MB. LLM context & DB tidak akan tumbuh tak terbatas.
-
----
-
-## 🧪 Testing / Re-verifikasi
-
-Smoke test end-to-end ada di `scratch/smoke.mjs`:
-
-```powershell
-# Terminal 1: start server di port 3789 (test mode)
-$env:PORT = 3789; npm start --prefix backend
-
-# Terminal 2: run smoke test
-node scratch/smoke.mjs
+```
+[User kirim] → tombol send jadi stop (red tint), AbortController dibuat
+       │
+[SSE: meta] → userMessageId tercatat
+[SSE: token*N] → bubble AI update real-time
+       │
+[User klik stop] →
+  1. AbortController.abort() — cancel fetch
+  2. Hapus bubble user + AI dari DOM
+  3. Restore teks ke chatbar
+  4. DELETE /messages/rollback (atomic transaction):
+     - Hapus message_tts rows
+     - Hapus messages (user + AI)
+     - Restore dynamic_memory snapshot
 ```
 
-Hasil: 13/13 PASS (semua endpoint, auto-seed, static serving, error handling).
+---
+
+## 🧠 Memory Engine
+
+| Layer | Mekanisme |
+|---|---|
+| **Short-term** | N pesan terakhir (`short_term_window`, 3–5) dikirim ke LLM setiap request |
+| **Long-term** | `extractAndMergeFacts` — LLM kedua ekstrak fakta dari user+AI message pair, merge + dedup (max 60 fakta), simpan ke `dynamic_memory` JSON |
+| **4 Kategori Fakta** | `user`, `ai`, `world`, `relationship` |
+| **Prompt Builder** | 6-bagian: Role → Output Spec → Voice Rules → Story Identity → Dynamic Facts → Output Rules |
+
+---
+
+## 🎨 Tema & Kustomisasi
+
+- **3 Tema**: `dark` (default), `light`, `coffee` (warm latte) — migrasi otomatis dari `child` legacy
+- **6 Font Families**: Serif, Lora, Slab, Nunito, Sans, System — dipilih per story
+- **Font Size**: 14–22px slider per story
+- **Reading Mode**: Immersive tanpa toolbar, independent toggle per story
+- **Avatar**: URL custom + enable/disable toggle + instant preview + 2-KB size validation
+
+---
+
+## 🔐 Keamanan
+
+- `MODEL_PROVIDER_API_KEY` hanya di backend, tidak pernah dikirim ke browser
+- Data cerita tersimpan lokal di SQLite — no cloud sync
+- Single-user, tanpa login. Untuk ekspos publik: tambahkan reverse-proxy + basic auth
+- Input limits: `MAX_MESSAGE_CONTENT=20000`, per-field `STORY_FIELD_MAX_LENGTH`, body 1 MB
+- Avatar URL validation: http/https only, max 2048 chars, valid URL parse
+
+---
+
+## 🧪 Testing
+
+```powershell
+# Start server test mode
+$env:PORT = 3789; npm start --prefix backend
+
+# Smoke test (13 endpoint)
+node scratch/smoke.mjs
+```
 
 ---
 

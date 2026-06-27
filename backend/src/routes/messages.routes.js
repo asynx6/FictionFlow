@@ -34,6 +34,16 @@ const insertMessageStmt = db.prepare(`
 const deleteMessageStmt = db.prepare(`
   DELETE FROM messages WHERE id = ? AND story_id = ?
 `);
+// Fallback lookup kalau frontend belum sempat capture user_message_id
+// dari SSE meta event (e.g. abort sangat awal sebelum meta terkirim).
+// Hapus user message terbaru by story_id + content match — relatif aman
+// karena rollback terjadi dalam window singkat setelah POST /messages.
+const findLatestUserMessageByContentStmt = db.prepare(`
+  SELECT id FROM messages
+  WHERE story_id = ? AND role = 'user' AND raw_content = ?
+  ORDER BY created_at DESC, id DESC
+  LIMIT 1
+`);
 const deleteMessageTtsByMsgStmt = db.prepare(`
   DELETE FROM message_tts WHERE message_id = ?
 `);
@@ -153,19 +163,35 @@ router.post('/fallback', async (req, res, next) => {
 // Rollback: hapus pesan user + AI yang sudah terlanjur tersimpan, dan
 // kembalikan dynamic_memory ke snapshot sebelum extraction. Frontend pakai
 // ini saat user klik Stop setelah SSE done terlanjur terkirim.
-// Body: { ai_message_id?, memory_snapshot? }
+// Body: { user_message_id?, ai_message_id?, memory_snapshot?, content? }
+// - user_message_id: id pesan user (kalau sudah diketahui dari SSE meta)
 // - ai_message_id: id pesan AI yang harus dihapus (kalau sudah tersimpan)
 // - memory_snapshot: string JSON dynamic_memory sebelum extract (kalau ada)
+// - content: fallback kalau user_message_id belum sempat ter-capture (abort
+//   sangat awal sebelum meta event terkirim). Backend cari user message
+//   terbaru by story_id + content match.
 router.delete('/rollback', async (req, res, next) => {
-  const userMessageId = Number.parseInt(req.body?.user_message_id ?? '0', 10);
+  let userMessageId = Number.parseInt(req.body?.user_message_id ?? '0', 10);
   const aiMessageId = Number.parseInt(req.body?.ai_message_id ?? '0', 10);
   const memorySnapshot = req.body?.memory_snapshot;
-
-  if (!Number.isInteger(userMessageId) || userMessageId <= 0) {
-    return next(new HttpError(400, 'user_message_id diperlukan.'));
-  }
+  const contentFallback = (req.body?.content ?? '').toString().trim();
 
   const storyId = req.story.id;
+
+  // Kalau user_message_id tidak ada (abort sebelum meta), coba cari by content.
+  // Frontend selalu kirim content sebagai fallback supaya rollback selalu
+  // bisa hapus user message yang sudah di-insert di route handler POST /.
+  if ((!Number.isInteger(userMessageId) || userMessageId <= 0) && contentFallback) {
+    const found = findLatestUserMessageByContentStmt.get(storyId, contentFallback);
+    if (found?.id) {
+      userMessageId = found.id;
+    }
+  }
+
+  if (!Number.isInteger(userMessageId) || userMessageId <= 0) {
+    return next(new HttpError(400, 'user_message_id diperlukan (atau content untuk fallback lookup).'));
+  }
+
   const tx = db.transaction(() => {
     // Hapus AI message + TTS cache-nya kalau ada
     if (Number.isInteger(aiMessageId) && aiMessageId > 0) {

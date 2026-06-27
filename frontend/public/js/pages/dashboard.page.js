@@ -1,5 +1,15 @@
-import { api } from '../core/api.js';
+import { apiClient } from '../api/apiClient.js';
 import { themeManager } from '../core/themeManager.js';
+
+document.addEventListener('error', (e) => {
+  const img = e.target;
+  if (!img?.classList?.contains('js-avatar-img')) return;
+  const initial = img.dataset?.initial ?? '?';
+  const div = document.createElement('div');
+  div.className = img.className.replace('object-cover', 'flex items-center justify-center');
+  div.textContent = initial;
+  img.replaceWith(div);
+}, true);
 
 document.addEventListener('DOMContentLoaded', async () => {
   themeManager.init();
@@ -82,7 +92,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     showLoading(true);
 
     try {
-      const res = await api.post('/generate/character', { prompt });
+      const res = await apiClient.post('/generate/character', { prompt });
       if (!res.success || !res.data) {
         showError(res.message || 'Gagal generate karakter.');
         showLoading(false);
@@ -219,7 +229,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (isAvatarEnabled(story)) {
       return `
         <div class="relative flex-shrink-0">
-          <img src="${escHtmlAttr(story.avatar_url)}" alt="${escHtmlAttr(name)}" class="w-14 h-14 sm:w-16 sm:h-16 rounded-full object-cover bg-gradient-to-br from-theme-accent/20 to-theme-accent/5 border border-theme-accent/20 shadow-sm" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'w-14 h-14 sm:w-16 sm:h-16 rounded-full bg-gradient-to-br from-theme-accent/20 to-theme-accent/5 border border-theme-accent/20 flex items-center justify-center text-theme-accent font-bold text-xl sm:text-2xl shadow-sm',textContent:'${initial}'}))" />
+          <img src="${escHtmlAttr(story.avatar_url)}" alt="${escHtmlAttr(name)}" class="js-avatar-img w-14 h-14 sm:w-16 sm:h-16 rounded-full object-cover bg-gradient-to-br from-theme-accent/20 to-theme-accent/5 border border-theme-accent/20 shadow-sm" data-initial="${initial}" />
         </div>
       `;
     }
@@ -264,7 +274,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     confirmDeleteBtn.disabled = true;
     confirmDeleteBtn.textContent = 'Menghapus...';
     try {
-      await api.delete(`/stories/${deleteTargetId}/permanent`);
+      await apiClient.delete(`/stories/${deleteTargetId}/permanent`);
       closeDeleteModal();
       await loadStories();
     } catch (err) {
@@ -281,7 +291,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     emptyState.classList.add('hidden');
 
     try {
-      const data = await api.get('/stories');
+      const data = await apiClient.get('/stories');
       const stories = data.data?.stories || [];
 
       storiesSkeleton.classList.add('hidden');
@@ -383,7 +393,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     };
 
     try {
-      const res = await api.post('/stories', formData);
+      const res = await apiClient.post('/stories', formData);
       if (res.success && res.data) {
         const id = res.data.story_id ?? res.data.id ?? res.data.story?.id;
         if (id) {

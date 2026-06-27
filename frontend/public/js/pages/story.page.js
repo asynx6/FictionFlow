@@ -1,9 +1,9 @@
-import { api } from '../core/api.js';
 import { apiClient } from '../api/apiClient.js';
 import { themeManager } from '../core/themeManager.js';
 import { Events, EventBus } from '../core/eventBus.js';
 import { ttsEngine } from '../core/ttsEngine.js';
 import { renderMarkdown } from '../core/markdownRenderer.js';
+import { stripReasoningContent } from '../core/textUtils.js';
 // Bug-B6: import the singleton ttsQueue (with pagehide hard-reset wire-up)
 // so that navigation round-trip doesn't leak Audio/Blob URL state.
 import { ttsQueue, TtsQueueManager } from '../core/ttsQueueManager.js';
@@ -218,7 +218,7 @@ function renderAvatarInto(target, story, { sizeClasses = 'w-9 h-9 sm:w-10 sm:h-1
   if (!target) return;
   const initial = (story?.ai_name ?? '?').toString().charAt(0).toUpperCase();
   if (isAvatarActive(story)) {
-    target.innerHTML = `<img src="${escapeHtmlAttr(story.avatar_url)}" alt="${escapeHtmlAttr(story?.ai_name ?? 'AI')}" class="${sizeClasses} rounded-full object-cover bg-gradient-to-br from-theme-accent/20 to-theme-accent/5 border border-theme-accent/20 shadow-sm" onerror="this.replaceWith(Object.assign(document.createElement('span'),{className:'${sizeClasses} rounded-full flex items-center justify-center bg-gradient-to-br from-theme-accent/20 to-theme-accent/5 border border-theme-accent/20 text-theme-accent font-serif font-bold shadow-sm',textContent:'${initial}'}))" />`;
+    target.innerHTML = `<img src="${escapeHtmlAttr(story.avatar_url)}" alt="${escapeHtmlAttr(story?.ai_name ?? 'AI')}" class="${sizeClasses} rounded-full object-cover bg-gradient-to-br from-theme-accent/20 to-theme-accent/5 border border-theme-accent/20 shadow-sm js-avatar-img" data-initial="${initial}" />`;
   } else {
     target.textContent = initial;
   }
@@ -369,6 +369,18 @@ function speakLastAiMessage() {
   if (ttsBtn) ttsBtn.click();
 }
 
+// Delegated error handler untuk avatar images — gantikan dengan initial fallback.
+// Img tag diberi class js-avatar-img + data-initial oleh renderer template.
+document.addEventListener('error', (e) => {
+  const img = e.target;
+  if (!img || !img.classList || !img.classList.contains('js-avatar-img')) return;
+  const initial = img.dataset?.initial ?? '?';
+  const span = document.createElement('span');
+  span.className = img.className.replace('object-cover', 'flex items-center justify-center');
+  span.textContent = initial;
+  img.replaceWith(span);
+}, true); // capturing phase — error events don't bubble.
+
 document.addEventListener('DOMContentLoaded', async () => {
   themeManager.init();
 
@@ -505,12 +517,36 @@ document.addEventListener('DOMContentLoaded', async () => {
   let readingMode = false;
   let fontSize = FONT_SIZE_DEFAULT;
   let fontFamily = FONT_FAMILY_DEFAULT;
+  // Flag supaya applyFontSize/applyFontFamily tidak trigger save ke SQL saat
+  // load awal dari currentStory (hindari PUT redundant + race dengan load).
+  let _fontInitLoading = false;
 
   // --- Reading Experience Logic ---
+  // Font size + family disimpan PER-STORY di SQL (kolom stories.font_family +
+  // stories.font_size). Fallback ke localStorage cuma untuk story legacy
+  // yang belum punya kolom (migration v5 backfill default). Saat user ubah
+  // slider/select, PUT /stories/:id langsung di-fire (debounced untuk slider).
   const clampFontSize = (v) => Math.max(FONT_SIZE_MIN, Math.min(FONT_SIZE_MAX, v));
-  const resolveInitialFontSize = () => {
-    const saved = parseInt(localStorage.getItem(FONT_SIZE_KEY), 10);
-    return clampFontSize(Number.isFinite(saved) ? saved : FONT_SIZE_DEFAULT);
+
+  // Debounce PUT /stories untuk slider (input event fire berkali-kali).
+  let _fontSaveTimer = null;
+  const persistFontToStory = (patch) => {
+    if (!currentStory?.id) return;
+    if (_fontInitLoading) return;
+    if (_fontSaveTimer) clearTimeout(_fontSaveTimer);
+    _fontSaveTimer = setTimeout(async () => {
+      _fontSaveTimer = null;
+      try {
+        await apiClient.updateStory(currentStory.id, patch);
+        // Mirror ke module-level cache supaya reload konsisten.
+        if (__currentStoryCache) {
+          if (patch.font_family !== undefined) __currentStoryCache.font_family = patch.font_family;
+          if (patch.font_size !== undefined) __currentStoryCache.font_size = patch.font_size;
+        }
+      } catch (err) {
+        console.warn('[font] gagal simpan ke story:', err?.message || err);
+      }
+    }, 300);
   };
 
   const applyFontSize = (size) => {
@@ -528,6 +564,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     chatContainer.querySelectorAll('.msg-ai-block .msg-content').forEach((el) => {
       el.classList.add('font-size-active');
     });
+
+    persistFontToStory({ font_size: fontSize });
   };
 
   const changeFontSize = (delta) => applyFontSize(fontSize + delta);
@@ -535,11 +573,6 @@ document.addEventListener('DOMContentLoaded', async () => {
   // --- Reading font-family picker ---
   // Apply font-family class ke chatContainer; CSS var --reading-font-family
   // di-consume oleh .msg-ai-block .msg-content (lihat tailwind.input.css).
-  const resolveInitialFontFamily = () => {
-    const saved = localStorage.getItem(FONT_FAMILY_KEY);
-    return FONT_FAMILY_MAP[saved] ? saved : FONT_FAMILY_DEFAULT;
-  };
-
   const applyFontFamily = (family) => {
     if (!FONT_FAMILY_MAP[family]) family = FONT_FAMILY_DEFAULT;
     fontFamily = family;
@@ -548,6 +581,26 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     Object.values(FONT_FAMILY_MAP).forEach((cls) => chatContainer.classList.remove(cls));
     chatContainer.classList.add(FONT_FAMILY_MAP[fontFamily]);
+
+    persistFontToStory({ font_family: fontFamily });
+  };
+
+  // Apply font settings dari currentStory (dipanggil di loadStoryAndMessages).
+  // Backfill ke SQL kalau story legacy belum punya nilai (migration v5 default).
+  const applyFontFromStory = (story) => {
+    if (!story) return;
+    _fontInitLoading = true;
+    const fam = (story.font_family || '').toString().trim();
+    const sz = Number.parseInt(story.font_size, 10);
+    const family = FONT_FAMILY_MAP[fam] ? fam : FONT_FAMILY_DEFAULT;
+    const size = Number.isFinite(sz) ? clampFontSize(sz) : FONT_SIZE_DEFAULT;
+    applyFontFamily(family);
+    applyFontSize(size);
+    _fontInitLoading = false;
+    // Backfill default ke SQL kalau story belum punya nilai (pre-migration).
+    if ((story.font_family == null || story.font_family === '') || !Number.isFinite(sz)) {
+      persistFontToStory({ font_family: family, font_size: size });
+    }
   };
 
   const applyReadingMode = (active) => {
@@ -585,8 +638,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     updateThemeIcons();
   };
 
-  applyFontSize(resolveInitialFontSize());
-  applyFontFamily(resolveInitialFontFamily());
+  // Font settings awal pakai default; akan di-override oleh applyFontFromStory()
+  // saat loadStoryAndMessages() resolve currentStory (font per-session dari SQL).
+  _fontInitLoading = true;
+  applyFontSize(FONT_SIZE_DEFAULT);
+  applyFontFamily(FONT_FAMILY_DEFAULT);
+  _fontInitLoading = false;
   applyReadingMode(localStorage.getItem(READING_MODE_KEY) === 'true');
   updateThemeIcons();
 
@@ -704,7 +761,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     memoryList.innerHTML = `<div class="flex justify-center p-4"><span class="material-icons-round animate-spin text-theme-accent">autorenew</span></div>`;
 
     try {
-      const res = await api.get(`/stories/${storyId}`);
+      const res = await apiClient.get(`/stories/${storyId}`);
       const storyData = res.data?.story ?? res.data;
 
       let mems = [];
@@ -890,19 +947,6 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // --- Chat Logic ---
 
-  const stripReasoningContent = (text) => {
-    if (typeof text !== 'string') return text;
-    const tags = ['ctrl32', 'think', 'reasoning', 'thought', 'analysis'];
-    let cleaned = text;
-    for (const tag of tags) {
-      cleaned = cleaned.replace(new RegExp(`<${tag}[^>]*>[\\s\\S]*?<\\/${tag}>`, 'gi'), '');
-      cleaned = cleaned.replace(new RegExp(`<\\/${tag}>`, 'gi'), '');
-    }
-    cleaned = cleaned.replace(/<ctrl32>.*?<\/ctrl32>/gi, '');
-    cleaned = cleaned.replace(/<ctrl32>/gi, '');
-    return cleaned;
-  };
-
   const finalizeResponse = (text) => {
     let cleaned = stripReasoningContent(text);
     cleaned = cleaned.replace(/\[(MIKA|NARASI|AI|KARAKTER)\]\s*/gi, '');
@@ -991,7 +1035,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       `;
     } else {
       const avatarHtml = isAvatarActive(currentStory)
-        ? `<img src="${escapeHtmlAttr(currentStory.avatar_url)}" alt="${escapeHtmlAttr(currentStory.ai_name)}" class="avatar ai-avatar-slot w-8 h-8 sm:w-9 sm:h-9 rounded-full object-cover" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'avatar',textContent:'${currentStory.ai_name.charAt(0).toUpperCase()}'}))" />`
+        ? `<img src="${escapeHtmlAttr(currentStory.avatar_url)}" alt="${escapeHtmlAttr(currentStory.ai_name)}" class="avatar ai-avatar-slot w-8 h-8 sm:w-9 sm:h-9 rounded-full object-cover js-avatar-img" data-initial="${currentStory.ai_name.charAt(0).toUpperCase()}" />`
         : `<div class="avatar" aria-hidden="true">${currentStory.ai_name.charAt(0).toUpperCase()}</div>`;
       div.innerHTML = `
         <div class="msg-ai-block">
@@ -1062,7 +1106,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   const loadStoryAndMessages = async () => {
     try {
-      const res = await api.get(`/stories/${storyId}`);
+      const res = await apiClient.get(`/stories/${storyId}`);
       if (!res.success) throw new Error('Story not found');
 
       currentStory = res.data?.story ?? res.data;
@@ -1071,6 +1115,10 @@ document.addEventListener('DOMContentLoaded', async () => {
       __currentStoryCache = currentStory;
 
       if (!currentStory?.ai_name) throw new Error('Data cerita tidak valid dari server.');
+
+      // Apply font settings dari SQL (per-story). Backfill default kalau
+      // story legacy belum punya nilai (migration v5 backfill).
+      applyFontFromStory(currentStory);
 
       headerAiName.textContent = currentStory.ai_name;
       renderAvatarInto(headerAvatar, currentStory);
@@ -1148,16 +1196,16 @@ document.addEventListener('DOMContentLoaded', async () => {
         others.forEach((voice, i) => {
           setTimeout(() => apiClient.warmupTts({ voice }).catch(() => {}), 500 * (i + 1));
         });
-      } catch { /* ignore */ }
+      } catch (e) { console.warn('[story] warmupTts batch failed:', e.message); }
 
-      const msgRes = await api.get(`/stories/${storyId}/messages`);
+      const msgRes = await apiClient.get(`/stories/${storyId}/messages`);
       const messages = msgRes.data?.messages ?? msgRes.data ?? [];
       // Fetch TTS cache untuk setiap assistant message (mixed-mode replay).
       // Backend route /tts-latest return { items: [{ message_id, segments, ... }] }
       // dengan segments SUDAH parsed array (bukan segments_json string).
       let ttsByMessageId = {};
       try {
-        const ttsRes = await api.get(`/stories/${storyId}/messages/tts-latest`);
+        const ttsRes = await apiClient.get(`/stories/${storyId}/messages/tts-latest`);
         const allTts = ttsRes.data?.items ?? ttsRes.data ?? [];
         if (Array.isArray(allTts)) {
           for (const entry of allTts) {
@@ -1165,7 +1213,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             if (Array.isArray(entry?.segments)) {
               segs = entry.segments;
             } else if (typeof entry?.segments_json === 'string') {
-              try { segs = JSON.parse(entry.segments_json); } catch { /* ignore */ }
+              try { segs = JSON.parse(entry.segments_json); } catch (e) { console.warn('[story] Invalid segments_json for msg', entry?.message_id, e.message); }
             }
             if (Array.isArray(segs) && segs.length > 0 && entry?.message_id != null) {
               ttsByMessageId[entry.message_id] = segs;
@@ -1330,16 +1378,18 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Rollback backend: hapus user message + AI message (kalau sudah
     // tersimpan) + restore dynamic_memory snapshot. Fire-and-forget —
     // frontend tidak menunggu hasil.
-    if (state.userMessageId || state.aiMessageId || state.memorySnapshot) {
-      try {
-        await api.delete(`/stories/${storyId}/messages/rollback`, {
-          user_message_id: state.userMessageId || null,
-          ai_message_id: state.aiMessageId || null,
-          memory_snapshot: state.memorySnapshot || null,
-        });
-      } catch (err) {
-        console.warn('[stop] rollback gagal:', err?.message || err);
-      }
+    // Selalu kirim content sebagai fallback supaya backend bisa hapus user
+    // message terbaru by story+content kalau user_message_id belum sempat
+    // ter-capture (abort sangat awal sebelum SSE meta event terkirim).
+    try {
+      await apiClient.delete(`/stories/${storyId}/messages/rollback`, {
+        user_message_id: state.userMessageId || null,
+        ai_message_id: state.aiMessageId || null,
+        memory_snapshot: state.memorySnapshot || null,
+        content: state.content || null,
+      });
+    } catch (err) {
+      console.warn('[stop] rollback gagal:', err?.message || err);
     }
   };
 
@@ -1416,7 +1466,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (!pendingUserBubble || !pendingAiBubble) return;
       continueErrorBtn.disabled = true;
       try {
-        const res = await api.post(`/stories/${storyId}/messages/fallback`, {
+        const res = await apiClient.post(`/stories/${storyId}/messages/fallback`, {
           user_content: content,
           error_message: providerError?.message || '',
         });
@@ -1450,14 +1500,15 @@ document.addEventListener('DOMContentLoaded', async () => {
       closeAiErrorDialog();
       finishSend();
       // Rollback backend (user message sudah di-insert sebelum streamChat)
-      if (currentSendState?.userMessageId || userMessageId) {
-        const uid = currentSendState?.userMessageId || userMessageId;
-        api.delete(`/stories/${storyId}/messages/rollback`, {
-          user_message_id: uid,
-          ai_message_id: currentSendState?.aiMessageId || aiMessageId || null,
-          memory_snapshot: currentSendState?.memorySnapshot || memorySnapshot || null,
-        }).catch((err) => console.warn('[cancel] rollback gagal:', err?.message || err));
-      }
+      // Selalu kirim content fallback supaya backend bisa hapus user message
+      // kalau user_message_id belum sempat ter-capture dari SSE meta event.
+      const uid = currentSendState?.userMessageId || userMessageId;
+      apiClient.delete(`/stories/${storyId}/messages/rollback`, {
+        user_message_id: uid || null,
+        ai_message_id: currentSendState?.aiMessageId || aiMessageId || null,
+        memory_snapshot: currentSendState?.memorySnapshot || memorySnapshot || null,
+        content: content || null,
+      }).catch((err) => console.warn('[cancel] rollback gagal:', err?.message || err));
     };
 
     _setAiErrorHandlers({ onContinue, onCancel });
@@ -1478,7 +1529,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     };
 
     try {
-      await api.postSSE(`/stories/${storyId}/messages`, { content }, (eventType, data) => {
+      await apiClient.postSSE(`/stories/${storyId}/messages`, { content }, (eventType, data) => {
         if (eventType === 'meta') {
           userMessageId = data?.user_message_id ?? null;
           if (userMessageId) setBubbleRealId(userBubble, userMessageId);
@@ -1547,7 +1598,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       _factPollTimerId = setTimeout(async () => {
         _factPollTimerId = null;
         try {
-          const res = await api.get(`/stories/${storyId}`);
+          const res = await apiClient.get(`/stories/${storyId}`);
           const storyData = res.data?.story ?? res.data;
           const rawMem = storyData?.dynamic_memory;
           if (rawMem) {

@@ -32,6 +32,12 @@ CREATE TABLE IF NOT EXISTS stories (
     active_model_id    TEXT NOT NULL DEFAULT 'openrouter/auto',
     short_term_window  INTEGER NOT NULL DEFAULT 4,
 
+    -- ====== Preferensi membaca (per-story) ======
+    -- font_family: serif|lora|slab|nunito|sans|system (default serif = Crimson Pro)
+    -- font_size: 14-22 px (default 16)
+    font_family        TEXT NOT NULL DEFAULT 'serif',
+    font_size          INTEGER NOT NULL DEFAULT 16,
+
     is_archived        INTEGER NOT NULL DEFAULT 0
 );
 

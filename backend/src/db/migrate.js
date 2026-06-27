@@ -62,6 +62,24 @@ const MIGRATIONS = [
       }
     },
   },
+  {
+    version: 5,
+    description: 'Add font_family + font_size columns (per-story reading preferences)',
+    up: (db) => {
+      const hasColumn = (table, column) => {
+        const cols = db.prepare(`PRAGMA table_info(${table})`).all();
+        return cols.some((c) => c.name === column);
+      };
+      if (!hasColumn('stories', 'font_family')) {
+        // Default 'serif' (Crimson Pro) — sesuai FONT_FAMILY_DEFAULT frontend.
+        db.exec("ALTER TABLE stories ADD COLUMN font_family TEXT NOT NULL DEFAULT 'serif'");
+      }
+      if (!hasColumn('stories', 'font_size')) {
+        // Default 16 — sesuai FONT_SIZE_DEFAULT frontend.
+        db.exec('ALTER TABLE stories ADD COLUMN font_size INTEGER NOT NULL DEFAULT 16');
+      }
+    },
+  },
 ];
 
 export function runMigrations(db) {

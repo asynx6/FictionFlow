@@ -81,7 +81,13 @@ const STORY_EDITABLE = [
   'tts_voice',
   'avatar_url',
   'avatar_enabled',
+  'font_family',
+  'font_size',
 ];
+
+const ALLOWED_FONT_FAMILIES = new Set(['serif', 'lora', 'slab', 'nunito', 'sans', 'system']);
+const FONT_SIZE_MIN = 14;
+const FONT_SIZE_MAX = 22;
 
 const STORY_FIELD_MAX_LENGTH = {
   title: 200,
@@ -92,6 +98,7 @@ const STORY_FIELD_MAX_LENGTH = {
   language_style: 80,
   target_ending: 1000,
   avatar_url: 2048,
+  active_model_id: 200,
 };
 
 function clampWindow(value) {
@@ -175,9 +182,9 @@ export function createStory(req, res) {
   const userGender = normalizeUserGender(req.body.user_gender);
   const title = (req.body.title?.toString().trim()) || `Cerita dengan ${aiName}`;
 
-  const avatarEnabled = body.avatar_enabled === true || body.avatar_enabled === 1 ||
-    (typeof body.avatar_enabled === 'string' && ['1','true','yes','on'].includes(body.avatar_enabled.toLowerCase()));
-  const avatarUrl = avatarEnabled ? sanitizeAvatarUrl(body.avatar_url) : null;
+  const avatarEnabled = req.body.avatar_enabled === true || req.body.avatar_enabled === 1 ||
+    (typeof req.body.avatar_enabled === 'string' && ['1','true','yes','on'].includes(req.body.avatar_enabled.toLowerCase()));
+  const avatarUrl = avatarEnabled ? sanitizeAvatarUrl(req.body.avatar_url) : null;
 
   const row = {
     id,
@@ -282,6 +289,29 @@ export function updateStory(req, res) {
     validateTtsVoiceOrThrow(trimmedVoice);
     provided.tts_voice = trimmedVoice;
   }
+  if (provided.font_family !== undefined) {
+    if (typeof provided.font_family !== 'string') {
+      throw new HttpError(400, 'Field "font_family" harus berupa string.');
+    }
+    const trimmedFont = provided.font_family.trim();
+    if (!ALLOWED_FONT_FAMILIES.has(trimmedFont)) {
+      throw new HttpError(
+        400,
+        `font_family "${trimmedFont}" tidak dikenal. Pilih salah satu: ${[...ALLOWED_FONT_FAMILIES].join(', ')}.`
+      );
+    }
+    provided.font_family = trimmedFont;
+  }
+  if (provided.font_size !== undefined) {
+    const n = Number.parseInt(provided.font_size, 10);
+    if (!Number.isInteger(n) || n < FONT_SIZE_MIN || n > FONT_SIZE_MAX) {
+      throw new HttpError(
+        400,
+        `font_size harus integer antara ${FONT_SIZE_MIN} dan ${FONT_SIZE_MAX}.`
+      );
+    }
+    provided.font_size = n;
+  }
   // Avatar pipeline: kalau payload membawa avatar_url, sanitize dulu. Kalau
   // user enable toggle tapi URL kosong/invalid → auto-disable supaya tidak
   // ada state gabungan (enabled=1 tanpa url) yang bikin frontend render
@@ -302,6 +332,7 @@ export function updateStory(req, res) {
     if (key === 'tts_voice') continue; // sudah divalidasi whitelist di atas
     if (key === 'avatar_enabled') continue; // sudah dicoerce di atas
     if (key === 'avatar_url') continue; // sudah disanitize di atas
+    if (key === 'font_family' || key === 'font_size') continue; // sudah divalidasi di atas
     if (typeof raw !== 'string') {
       throw new HttpError(400, `Field "${key}" harus berupa string.`);
     }
@@ -354,10 +385,17 @@ export function deleteStory(req, res) {
 
 export function hardDeleteStory(req, res) {
   const id = req.params.id;
-  // Delete messages first, then story, to maintain FK cleanliness if FK added later.
-  deleteMessagesStmt.run(id);
-  const result = deleteStoryStmt.run(id);
-  if (result.changes === 0) throw new HttpError(404, 'Story tidak ditemukan.');
+  // Delete messages first, then story, dalam satu transaksi supaya
+  // atomic. Kalau crash di tengah, DB tidak masuk state inkonsisten.
+  const tx = db.transaction(() => {
+    deleteMessagesStmt.run(id);
+    const result = deleteStoryStmt.run(id);
+    if (result.changes === 0) {
+      throw new HttpError(404, 'Story tidak ditemukan.');
+    }
+    return result;
+  });
+  tx();
   res.json({
     success: true,
     data: { id },

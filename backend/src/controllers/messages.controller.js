@@ -7,6 +7,7 @@ import {
 } from '../services/modelProvider.service.js';
 import { extractAndMergeFacts } from '../services/memoryExtractor.service.js';
 import { HttpError } from '../middlewares/errorHandler.js';
+import { stripReasoningContent } from '../util/text.js';
 
 /**
  * Resolve gender untuk sebuah segment audio.
@@ -62,19 +63,6 @@ function classifyProvider(segments) {
 function sendSse(res, event, data) {
   res.write(`event: ${event}\n`);
   res.write(`data: ${JSON.stringify(data)}\n\n`);
-}
-
-function stripReasoningContent(text) {
-  if (typeof text !== 'string') return text;
-  const tags = ['ctrl32', 'think', 'reasoning', 'thought', 'analysis'];
-  let cleaned = text;
-  for (const tag of tags) {
-    cleaned = cleaned.replace(new RegExp(`<${tag}[^>]*>[\\s\\S]*?<\\/${tag}>`, 'gi'), '');
-    cleaned = cleaned.replace(new RegExp(`<\\/${tag}>`, 'gi'), '');
-  }
-  cleaned = cleaned.replace(/<ctrl32>.*?<\/ctrl32>/gi, '');
-  cleaned = cleaned.replace(/<ctrl32>/gi, '');
-  return cleaned;
 }
 
 function buildLocalFallbackResponse(story, userContent, errorMessage) {
@@ -257,7 +245,13 @@ export async function streamChat({
   let accumulator = '';
   let providerFailed = false;
   const abortCtrl = new AbortController();
-  res.on('close', () => abortCtrl.abort());
+  const heartbeat = setInterval(() => {
+    res.write(':\n\n');
+  }, 15000);
+  res.on('close', () => {
+    clearInterval(heartbeat);
+    abortCtrl.abort();
+  });
 
   try {
     const stream = streamChatCompletion({
@@ -285,6 +279,7 @@ export async function streamChat({
         message: err.message || 'AI provider mengalami gangguan.',
         code: err.code || 'PROVIDER_ERROR',
       });
+      clearInterval(heartbeat);
       res.end();
       return;
     }
@@ -295,6 +290,7 @@ export async function streamChat({
       message: 'AI tidak mengembalikan balasan (respons kosong).',
       code: 'EMPTY_RESPONSE',
     });
+    clearInterval(heartbeat);
     res.end();
     return;
   }
@@ -368,6 +364,7 @@ export async function streamChat({
     );
   }
 
+  clearInterval(heartbeat);
   res.end();
 }
 
