@@ -316,47 +316,46 @@ async function speakMessage(msgId, textOrSegments) {
   stopSpeaking();
 
   const voice = resolveStoryVoice();
-  let unifiedText = '';
-
-  // Kumpulkan full text jadi 1 chunk, tidak peduli inputnya cached segments
-  // atau string mentah. Hasilnya single POST /api/tts → single MP3 → audio
-  // mulus tanpa gap antar fetch/segment.
   const segments = Array.isArray(textOrSegments) ? textOrSegments : null;
+
+  // Per-segment playback: setiap segmen fetch & main sendiri via queue.
+  // Segmen pertama mulai dalam < 2 detik (cache panas dari pre-synthesis).
+  let ttsSegments;
   if (segments && segments.length > 0) {
-    // Cached chunks (audio_segments[]) → gabung.
-    unifiedText = segments
-      .map((s) => (s?.text ?? '').toString().replace(/\s+/g, ' ').trim())
-      .filter(Boolean)
-      .join(' ');
+    ttsSegments = segments.map((s) => {
+      const text = (s?.text ?? '').toString().trim();
+      if (!text) return null;
+      const segGender = s.gender === 'female' ? 'female' : 'male';
+      return {
+        tag: s.type === 'dialogue' ? 'DIALOG' : 'NARASI',
+        text: text,
+        voice: s.voice_config?.voice_name || voice,
+        gender: segGender,
+      };
+    }).filter(Boolean);
   } else if (typeof textOrSegments === 'string') {
-    unifiedText = textOrSegments;
+    const cleaned = ttsEngine.parseTtsText(textOrSegments);
+    if (!cleaned || !cleaned.trim()) {
+      console.warn('[tts] cleaned text kosong, abort. msgId=', msgId);
+      return;
+    }
+    const aiGenderRaw = __currentStoryCache?.ai_gender?.toString?.() ?? '';
+    const gender = aiGenderRaw === 'female' ? 'female' : 'male';
+    ttsSegments = [{ tag: 'NARASI', text: cleaned.trim(), voice, gender }];
   }
 
-  // Strip notts/markdown residue.
-  const cleaned = ttsEngine.parseTtsText(unifiedText);
-  if (!cleaned || !cleaned.trim()) {
-    console.warn('[tts] cleaned text kosong, abort. msgId=', msgId);
+  if (!ttsSegments || ttsSegments.length === 0) {
+    console.warn('[tts] no segments to play, abort. msgId=', msgId);
     return;
   }
 
-  const aiGenderRaw = __currentStoryCache?.ai_gender?.toString?.() ?? '';
-  const gender = aiGenderRaw === 'female' ? 'female' : 'male';
-
-  const singleChunk = [{
-    tag: 'NARASI',
-    text: cleaned.trim(),
-    voice: voice,
-    gender: gender,
-  }];
-
   currentUtterance.id = msgId;
-  currentUtterance.mode = 'single';
-  currentUtterance.isLoading = true; // fetch in flight
+  currentUtterance.isLoading = true;
   currentUtterance.isPlaying = false;
   currentUtterance.isPaused = false;
   EventBus.emit(Events.TTS_START);
-  EventBus.emit(Events.TTS_LOADING); // custom: button show spinner
-  ttsQueue.enqueueSegments(singleChunk);
+  EventBus.emit(Events.TTS_LOADING);
+  ttsQueue.enqueueSegments(ttsSegments);
   ttsQueue.play();
   updateGlobalTtsButtons();
 }

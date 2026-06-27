@@ -6,8 +6,11 @@ import {
   resolveModelId,
 } from '../services/modelProvider.service.js';
 import { extractAndMergeFacts } from '../services/memoryExtractor.service.js';
+import { synthesizeText } from '../services/edgeTts.service.js';
 import { HttpError } from '../middlewares/errorHandler.js';
 import { stripReasoningContent } from '../util/text.js';
+import { synthesizeText } from '../services/edgeTts.service.js';
+import { synthesizeText } from '../services/edgeTts.service.js';
 
 /**
  * Resolve gender untuk sebuah segment audio.
@@ -352,6 +355,17 @@ export async function streamChat({
     audio_segments: ttsEntries,
     used_fallback_parse: usedFallbackParse,
   });
+
+  // Pre-synthesize semua audio segment ke LRU cache (non-blocking).
+  // Begitu user klik "Dengarkan", semua segment sudah panas → < 1ms cache hit.
+  // Tidak delay SSE done — Promise.allSettled jalan setelah response flush.
+  Promise.allSettled(
+    ttsEntries.map((seg) =>
+      synthesizeText(seg.text, seg.voice_config.voice_name).catch((err) =>
+        console.warn('[messages] pre-synth cache miss:', err.message)
+      )
+    )
+  );
 
   // Memory extractor: kirim prosa yang sudah di-parse, bukan JSON mentah.
   if (assistantMessageId !== null && fullStoryText.trim().length > 0) {

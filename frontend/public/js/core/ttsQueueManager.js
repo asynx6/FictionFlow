@@ -66,9 +66,12 @@ export class TtsQueueManager {
     this._currentBlobUrl = null;
     this._activeAbort = null;
     this._currentTimeoutId = null;
-    // Fetch timeout 25s — handle Edge TTS cold-start first hit (~10-20s).
-    // Subsequent hits = cache hit < 50ms (server-side LRU).
-    this._fetchTimeoutMs = 25000;
+    this._prefetchedBlob = null;   // Blob untuk segmen berikutnya (pre-fetch)
+    this._prefetchedIndex = -1;    // Indeks segmen yang sudah di-pre-fetch
+    this._prefetchAbort = null;    // AbortController untuk inflight prefetch
+    // Fetch timeout 5s — dengan pre-synthesis backend, cache hampir selalu
+    // panas. Cold path timeout cepat, user bisa retry.
+    this._fetchTimeoutMs = 5000;
   }
 
   subscribe(fn) {
@@ -184,6 +187,15 @@ export class TtsQueueManager {
     // Cleanup state sebelumnya (jangan leak Blob URL antar segment).
     this._disposeCurrent();
 
+    // Pre-fetch hit: segmen berikutnya sudah siap sebelum current selesai.
+    if (this._prefetchedBlob && this._prefetchedIndex === this.index) {
+      const blob = this._prefetchedBlob;
+      this._prefetchedBlob = null;
+      this._prefetchedIndex = -1;
+      this._playBlob(blob, segment);
+      return;
+    }
+
     // Client-side retry untuk transient failures (HTTP 500/503/timeout).
     // Backend sudah retry 3x di runWithRetry, but defense-in-depth: kalau
     // backend edge TTS gagal semua attempt, client masih bisa retry habis
@@ -252,6 +264,62 @@ export class TtsQueueManager {
       });
     };
     trySynthesize(0);
+  }
+
+  /**
+   * Pre-fetch segment N+1 di background saat segment N sedang dimainkan.
+   * Setelah fetch sukses, blob disimpan di this._prefetchedBlob.
+   * Saat audio.onended segment N, langsung pakai prefetched blob tanpa
+   * fetch baru → gapless playback.
+   */
+  _prefetchNext() {
+    const nextIdx = this.index + 1;
+    if (nextIdx >= this.segments.length) return;
+    // Jangan pre-fetch kalau sudah ada blob untuk index yang sama.
+    if (this._prefetchedIndex === nextIdx && this._prefetchedBlob) return;
+
+    // Cleanup prefetch sebelumnya yang sudah stale.
+    if (this._prefetchAbort) {
+      try { this._prefetchAbort.abort(); } catch { /* ignore */ }
+      this._prefetchAbort = null;
+    }
+    this._prefetchedBlob = null;
+    this._prefetchedIndex = -1;
+
+    const nextSeg = this.segments[nextIdx];
+    if (!nextSeg || !nextSeg.text) return;
+
+    const controller = new AbortController();
+    this._prefetchAbort = controller;
+
+    import('../api/apiClient.js').then(({ apiClient }) => {
+      apiClient
+        .synthesizeTts({
+          text: nextSeg.text,
+          voice: resolveTtsVoice(nextSeg),
+          gender: nextSeg.gender,
+          signal: controller.signal,
+        })
+        .then((blob) => {
+          if (this._prefetchAbort !== controller) return; // stale
+          this._prefetchAbort = null;
+          if (!blob || blob.size < 1024) {
+            this._prefetchedBlob = null;
+            this._prefetchedIndex = -1;
+            return;
+          }
+          this._prefetchedBlob = blob;
+          this._prefetchedIndex = nextIdx;
+        })
+        .catch((err) => {
+          if (err?.name === 'AbortError') return;
+          if (this._prefetchAbort !== controller) return;
+          this._prefetchAbort = null;
+          this._prefetchedBlob = null;
+          this._prefetchedIndex = -1;
+          // Silent fail — _speakCurrent() akan fetch ulang saat giliran.
+        });
+    }).catch(() => {}); // dynamic import gagal → silent
   }
 
   _playBlob(blob, segment) {
