@@ -2,62 +2,121 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ============================================================================
+   FictionFlow — Global Design Tokens & Component Layer
+   ----------------------------------------------------------------------------
+   Layers:
+     1. base        — theme tokens, body, focus ring, scrollbar
+     2. components  — UI primitives (panels, inputs, buttons, bubbles, TTS)
+     3. utilities   — dynamic reading-scale font sizes, scrollbars
+     4. plain CSS   — cascade overrides (must win over @layer components)
+   ============================================================================ */
+
 @layer base {
+  /* ---- Theme tokens (RGB triplets for alpha-compatible Tailwind) ---- */
+
   :root[data-theme="dark"] {
     color-scheme: dark;
+    /* warm charcoal */
     --theme-bg: 23 21 18;
-    /* warm charcoal #171512 */
+    /* parchment-dark */
     --theme-surface: 32 28 24;
-    /* parchment-dark #201c18 */
+    /* warm cream */
     --theme-text: 244 237 226;
-    /* warm cream #f4ede2 */
+    /* warm stone */
     --theme-muted: 168 159 145;
-    /* warm stone #a89f91 */
+    /* amber-gold */
     --theme-accent: 214 157 85;
-    /* amber-gold #d69d55 */
+    /* warm panel */
     --theme-hover: 42 37 32;
-    /* warm panel #2a2520 */
+    /* soft border */
     --theme-border: 55 49 43;
-    /* soft border #37312b */
   }
 
   :root[data-theme="light"] {
     color-scheme: light;
+    /* warm parchment */
     --theme-bg: 252 248 241;
-    /* warm parchment #fcf8f1 */
+    /* off-white surface */
     --theme-surface: 255 253 248;
-    /* off-white surface #fffdf8 */
+    /* warm ink */
     --theme-text: 44 41 36;
-    /* warm ink #2c2924 */
+    /* warm brown */
     --theme-muted: 120 109 95;
-    /* warm brown #786d5f */
+    /* amber leather */
     --theme-accent: 174 106 26;
-    /* amber leather #ae6a1a */
+    /* warm beige */
     --theme-hover: 240 232 220;
-    /* warm beige #f0e8dc */
+    /* parchment border */
     --theme-border: 228 217 202;
-    /* parchment border #e4d9ca */
   }
 
-  :root[data-theme="child"] {
+  :root[data-theme="coffee"] {
     color-scheme: light;
-    --theme-bg: 254 252 232;
-    /* yellow-50 */
-    --theme-surface: 255 255 255;
-    --theme-text: 69 26 3;
-    /* amber-900 */
-    --theme-muted: 146 64 14;
-    /* amber-700 */
-    --theme-accent: 217 119 6;
-    /* amber-600 */
-    --theme-hover: 254 240 138;
-    /* yellow-200 */
-    --theme-border: 253 224 71;
-    /* yellow-300 */
+    /* warm latte foam */
+    --theme-bg: 245 236 222;
+    /* cream surface */
+    --theme-surface: 251 245 234;
+    /* espresso roast */
+    --theme-text: 54 38 26;
+    /* mocha milk */
+    --theme-muted: 122 100 78;
+    /* caramel drizzle */
+    --theme-accent: 160 90 45;
+    /* steamed milk */
+    --theme-hover: 235 224 207;
+    /* coffee rim */
+    --theme-border: 212 192 168;
   }
+
+  /* ---- Global body ---- */
 
   body {
     background-color: rgb(var(--theme-bg));
+    color: rgb(var(--theme-text));
+    font-family: 'DM Sans', system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+    /* Ambient warm wash — subtle radial gradient for atmosphere (non-flat) */
+    background-image:
+      radial-gradient(
+        ellipse 80% 60% at 50% -10%,
+        rgb(var(--theme-accent) / 0.06),
+        transparent 70%
+      ),
+      radial-gradient(
+        ellipse 50% 40% at 100% 100%,
+        rgb(var(--theme-accent) / 0.04),
+        transparent 60%
+      );
+    background-attachment: fixed;
+    background-repeat: no-repeat;
+  }
+
+  /* Smooth anchor scrolling (works for both reading & nav) */
+  html {
+    scroll-behavior: smooth;
+    -webkit-text-size-adjust: 100%;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    html {
+      scroll-behavior: auto;
+    }
+
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+
+  /* Selection color matches theme accent */
+  ::selection {
+    background-color: rgb(var(--theme-accent) / 0.25);
     color: rgb(var(--theme-text));
   }
 
@@ -68,23 +127,52 @@
 }
 
 @layer components {
+  /* ---- Surface primitives ---- */
+
   .surface-panel {
-    @apply bg-theme-surface shadow-sm transition-all duration-300 border border-theme-border rounded-2xl;
+    @apply bg-theme-surface transition-all duration-300 border border-theme-border rounded-2xl;
+    box-shadow:
+      0 1px 2px -1px rgb(0 0 0 / 0.06),
+      0 4px 16px -8px rgb(0 0 0 / 0.1);
   }
 
   .glass-panel {
-    @apply bg-theme-surface/80 backdrop-blur-xl transition-all duration-300 border-b border-theme-border;
+    @apply bg-theme-surface/85 backdrop-blur-xl transition-all duration-300 border-b border-theme-border;
+    box-shadow: 0 1px 0 rgb(255 255 255 / 0.03) inset, 0 4px 24px -12px rgb(0 0 0 / 0.15);
   }
+
+  /* ---- Form controls ---- */
 
   .input-field {
     @apply w-full bg-theme-hover/50 border border-theme-border/50 rounded-xl px-4 py-3 text-sm text-theme-text placeholder-theme-muted focus:outline-none focus:ring-2 focus:ring-theme-accent/30 focus:border-theme-accent focus:bg-theme-surface transition-all duration-200;
   }
 
-  .btn-primary {
-    @apply inline-flex items-center justify-center bg-theme-accent text-white font-semibold rounded-xl px-5 py-3 hover:scale-[1.02] active:scale-[0.98] transition-transform shadow-md shadow-theme-accent/20;
+  .input-field:hover:not(:focus) {
+    border-color: rgb(var(--theme-border) / 0.8);
   }
 
-  /* Reading progress bar */
+  .btn-primary {
+    @apply inline-flex items-center justify-center font-semibold rounded-xl px-5 py-3 transition-all duration-300 relative overflow-hidden;
+    background-image: linear-gradient(135deg, rgb(var(--theme-accent)), rgb(var(--theme-accent) / 0.88));
+    color: white;
+    box-shadow:
+      0 1px 0 rgb(255 255 255 / 0.15) inset,
+      0 8px 20px -8px rgb(var(--theme-accent) / 0.45);
+  }
+
+  .btn-primary:hover {
+    transform: translateY(-1px) scale(1.01);
+    box-shadow:
+      0 1px 0 rgb(255 255 255 / 0.2) inset,
+      0 12px 28px -8px rgb(var(--theme-accent) / 0.6);
+  }
+
+  .btn-primary:active {
+    transform: translateY(0) scale(0.99);
+  }
+
+  /* ---- Reading progress bar ---- */
+
   .reading-progress {
     @apply h-[3px] bg-theme-accent/20 fixed top-0 left-0 right-0 z-[60];
   }
@@ -94,7 +182,8 @@
     width: 0%;
   }
 
-  /* Reading toolbar */
+  /* ---- Reading toolbar ---- */
+
   .reading-toolbar {
     @apply sticky top-0 z-40 transition-all duration-300 border-b border-theme-border/40 bg-theme-surface/90 backdrop-blur-xl;
   }
@@ -107,7 +196,8 @@
     @apply opacity-100;
   }
 
-  /* Toolbar controls */
+  /* ---- Toolbar controls ---- */
+
   .tool-btn {
     @apply p-2 rounded-xl text-theme-muted hover:text-theme-text hover:bg-theme-hover transition-all duration-200 flex items-center justify-center;
   }
@@ -120,7 +210,8 @@
     @apply opacity-40 cursor-not-allowed;
   }
 
-  /* Reading mode container state */
+  /* ---- Reading mode container state ---- */
+
   body.is-reading-mode header {
     @apply hidden;
   }
@@ -145,7 +236,8 @@
     @apply bg-theme-bg;
   }
 
-  /* Story message containers */
+  /* ---- Chat message containers ---- */
+
   .msg-ai-block {
     @apply flex gap-4 max-w-[92%] sm:max-w-[85%] md:max-w-[78%];
   }
@@ -163,15 +255,15 @@
   }
 
   .msg-user-block {
-    @apply flex flex-col items-end max-w-[85%] sm:max-w-[75%] md:max-w-[65%];
+    @apply flex flex-col items-end max-w-[80%] sm:max-w-[75%] md:max-w-[65%];
   }
 
   .msg-user-block .msg-content {
-    @apply inline-block px-3 py-1.5 bg-theme-hover/70 text-theme-text rounded-2xl rounded-tr-md text-sm sm:text-[14px] leading-snug break-words whitespace-pre-wrap min-w-0 font-sans border border-theme-border/30;
+    @apply inline-block px-3 py-2 bg-theme-hover/70 text-theme-text rounded-2xl rounded-tr-md text-sm leading-snug break-words whitespace-pre-wrap min-w-0 font-sans border border-theme-border/30 transition-all duration-200;
   }
 
   .msg-user-block .msg-time {
-    @apply text-[10px] text-theme-muted mt-1.5 opacity-0 group-hover:opacity-100 transition-opacity pr-1;
+    @apply text-[11px] text-theme-muted mt-1 pr-1 opacity-70 group-hover:opacity-100 transition-opacity;
   }
 
   /* Entrance animation for new messages */
@@ -191,7 +283,25 @@
     }
   }
 
-  /* Prose styling for story content */
+  /* Soft fade-in utility — used for page-level mounts */
+  .animate-fade-in {
+    animation: fade-in 0.5s ease-out forwards;
+  }
+
+  @keyframes fade-in {
+    from {
+      opacity: 0;
+      transform: translateY(8px);
+    }
+
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  /* ---- Prose styling for story content ---- */
+
   .prose-story .msg-content p {
     @apply mb-4 last:mb-0;
   }
@@ -249,7 +359,183 @@
     @apply bg-theme-hover px-1.5 py-0.5 rounded text-xs font-mono text-theme-accent;
   }
 
-  /* TTS button in story mode */
+  /* ---- Session card (dashboard list) ---- */
+
+  .session-card {
+    @apply surface-panel p-5 relative overflow-hidden transition-all duration-300;
+  }
+
+  .session-card::before {
+    content: '';
+    @apply absolute top-0 left-0 w-[3px] h-0 bg-theme-accent transition-all duration-300;
+  }
+
+  .session-card:hover {
+    @apply -translate-y-0.5 shadow-lg;
+    border-color: rgb(var(--theme-accent) / 0.3);
+  }
+
+  .session-card:hover::before {
+    @apply h-full;
+  }
+
+  /* Corner glow on hover */
+  .session-card::after {
+    content: '';
+    @apply absolute -top-12 -right-12 w-24 h-24 rounded-full opacity-0 transition-opacity duration-500 pointer-events-none;
+    background: radial-gradient(circle, rgb(var(--theme-accent) / 0.18), transparent 70%);
+  }
+
+  .session-card:hover::after {
+    @apply opacity-100;
+  }
+
+  /* ---- Scroll-to-bottom inline button (footer capsule, left of reading-mode) ---- */
+  /* Dulu floating fixed orb — ketutup bar chat di mobile. Sekarang inline
+     di top-row footer capsule. Hidden secara default, pop-in saat visible. */
+
+  .scroll-orb-inline {
+    @apply p-1.5 rounded-full text-theme-muted bg-transparent flex items-center justify-center transition-all duration-300;
+    opacity: 0;
+    transform: scale(0.6);
+    pointer-events: none;
+    width: 0;
+    overflow: hidden;
+  }
+
+  .scroll-orb-inline.is-visible {
+    @apply text-theme-accent hover:text-theme-text hover:bg-theme-hover;
+    opacity: 1;
+    transform: scale(1);
+    pointer-events: auto;
+    width: auto;
+  }
+
+  .scroll-orb-inline:active {
+    @apply scale-95;
+  }
+
+  /* ---- Hero title (dashboard) ---- */
+
+  .hero-title {
+    @apply font-serif font-bold tracking-tight leading-[1.1];
+    background-image: linear-gradient(
+      135deg,
+      rgb(var(--theme-text)) 0%,
+      rgb(var(--theme-text)) 60%,
+      rgb(var(--theme-accent)) 100%
+    );
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+
+  /* ---- Input capsule (story page footer) ---- */
+
+  .input-capsule {
+    @apply relative transition-all duration-300;
+    box-shadow:
+      0 12px 40px -12px rgb(0 0 0 / 0.2),
+      inset 0 1px 0 rgb(255 255 255 / 0.04);
+  }
+
+  .input-capsule:focus-within {
+    border-color: rgb(var(--theme-accent) / 0.4);
+    box-shadow:
+      0 16px 48px -12px rgb(var(--theme-accent) / 0.25),
+      inset 0 1px 0 rgb(255 255 255 / 0.06);
+  }
+
+  /* Kill the global focus-visible ring inside the chat capsule — it draws a
+     "kotak-kotak" outline around the textarea when the user clicks/focuses it,
+     which the user called out as ugly. The capsule's own :focus-within glow is
+     the only focus affordance we want here. */
+  .input-capsule textarea:focus-visible,
+  .input-capsule input:focus-visible,
+  #messageInput:focus-visible {
+    outline: none !important;
+    box-shadow: none !important;
+    --tw-ring-shadow: 0 0 #0000 !important;
+    --tw-ring-offset-shadow: 0 0 #0000 !important;
+  }
+
+  /* ---- Send button (story page) ---- */
+
+  .send-orb {
+    @apply relative overflow-hidden transition-all duration-300;
+  }
+
+  .send-orb::after {
+    content: '';
+    @apply absolute inset-0 opacity-0 transition-opacity duration-300;
+    background: radial-gradient(circle at 30% 30%, rgb(255 255 255 / 0.25), transparent 60%);
+  }
+
+  .send-orb:not(:disabled):hover::after {
+    @apply opacity-100;
+  }
+
+  /* Stop-state cue: saat sendBtn di-swap jadi stop (isAiResponding=true),
+     beri tint merah supaya user tahu tombol sekarang = abort. Tint ini hanya
+     cosmetic, behavior di-handle JS (handleStopClick). */
+  .send-orb.is-stop-active {
+    background-image: linear-gradient(to bottom right, rgb(239 68 68 / 0.95), rgb(220 38 38 / 0.9));
+    box-shadow: 0 10px 28px -8px rgb(239 68 68 / 0.4);
+  }
+  .send-orb.is-stop-active:not(:disabled):hover {
+    box-shadow: 0 14px 36px -8px rgb(239 68 68 / 0.5);
+  }
+
+  /* Perfect icon centering. Material Icons font baseline metric bikin icon
+     sedikit off-center vertikal; line-height:1 + display:flex parent + nikmat
+     0 transform fix itu. Hapus translate group-hover lama (bikin icon geser
+     diagonal saat hover, terlihat "jelek ga pas di tengah"). */
+  .send-orb .send-stop-icon {
+    line-height: 1 !important;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transform: none !important;
+  }
+  .send-orb:not(:disabled):hover .send-stop-icon {
+    transform: none !important;
+  }
+
+  /* ---- Staggered reveal (page mount / list inject) ---- */
+
+  .reveal {
+    opacity: 0;
+    transform: translateY(12px);
+    animation: reveal-up 0.5s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+  }
+
+  @keyframes reveal-up {
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  /* ---- Typing dots (story page indicator) ---- */
+
+  .typing-dot {
+    @apply w-1.5 h-1.5 bg-theme-accent rounded-full;
+    animation: typing-bounce 1.2s ease-in-out infinite;
+  }
+
+  @keyframes typing-bounce {
+    0%, 60%, 100% {
+      transform: translateY(0);
+      opacity: 0.5;
+    }
+    30% {
+      transform: translateY(-4px);
+      opacity: 1;
+    }
+  }
+
+  /* ---- TTS button (in story mode) ---- */
+
   .tts-btn {
     @apply text-[10px] text-theme-muted hover:text-theme-accent transition-colors flex items-center gap-0.5;
   }
@@ -257,9 +543,79 @@
   .tts-btn.playing {
     @apply text-theme-accent;
   }
+
+  /* ---- Settings drawer (story page right panel) ---- */
+  /* Spring-out entrance: drawer slides in with elastic ease, backdrop
+     fades, header & content stagger in. Matches "Editorial Reading Room"
+     tactile feel — calm but responsive. */
+
+  .settings-backdrop {
+    @apply fixed inset-0 bg-black/40 backdrop-blur-sm;
+    opacity: 0;
+    transition: opacity 0.45s ease;
+  }
+
+  .settings-backdrop.is-open {
+    opacity: 1;
+  }
+
+  .settings-drawer {
+    @apply fixed right-0 top-0 bottom-0 w-full max-w-sm bg-theme-surface border-l border-theme-border/50 flex flex-col;
+    box-shadow:
+      -12px 0 40px -12px rgb(0 0 0 / 0.35),
+      inset 1px 0 0 rgb(255 255 255 / 0.04);
+    transform: translateX(100%) translateX(0);
+    opacity: 0;
+    transition:
+      transform 0.5s cubic-bezier(0.16, 1, 0.3, 1),
+      opacity 0.35s ease;
+    will-change: transform, opacity;
+  }
+
+  .settings-drawer.is-open {
+    transform: translateX(0);
+    opacity: 1;
+  }
+
+  /* Staggered content reveal — header first, then sections cascade. */
+  .settings-drawer.is-open .settings-header {
+    animation: settings-slide-in 0.5s cubic-bezier(0.16, 1, 0.3, 1) 0.05s both;
+  }
+
+  .settings-drawer.is-open .settings-section {
+    animation: settings-slide-in 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+
+  .settings-drawer.is-open .settings-section:nth-child(1) { animation-delay: 0.12s; }
+  .settings-drawer.is-open .settings-section:nth-child(2) { animation-delay: 0.18s; }
+  .settings-drawer.is-open .settings-section:nth-child(3) { animation-delay: 0.24s; }
+  .settings-drawer.is-open .settings-section:nth-child(4) { animation-delay: 0.30s; }
+
+  @keyframes settings-slide-in {
+    from {
+      opacity: 0;
+      transform: translateX(24px);
+    }
+    to {
+      opacity: 1;
+      transform: translateX(0);
+    }
+  }
+
+  /* Subtle accent rail on drawer's left edge — glows when open. */
+  .settings-drawer::before {
+    content: '';
+    @apply absolute top-0 bottom-0 left-0 w-[2px] bg-theme-accent/0 transition-all duration-500;
+  }
+
+  .settings-drawer.is-open::before {
+    @apply bg-theme-accent/40;
+  }
 }
 
 @layer utilities {
+  /* ---- Thin scrollbar (overlay-style for chat panels) ---- */
+
   .scrollbar-thin::-webkit-scrollbar {
     width: 6px;
     height: 6px;
@@ -277,7 +633,14 @@
     @apply bg-theme-muted;
   }
 
-  /* Font size utility for dynamic reading scale */
+  /* Firefox */
+  .scrollbar-thin {
+    scrollbar-width: thin;
+    scrollbar-color: rgb(var(--theme-border)) transparent;
+  }
+
+  /* ---- Dynamic reading-scale font sizes ---- */
+
   .font-size-xs {
     font-size: 14px;
   }
@@ -305,20 +668,120 @@
   .font-size-3xl {
     font-size: 22px;
   }
+
+  /* ---- Reading font-family picker (applies to AI story messages) ---- */
+  /* Dipilih via select di story settings. CSS var di-set di chatContainer,
+     di-consume oleh .msg-ai-block .msg-content supaya hanya teks AI
+     (narasi + dialog) yang terdampak — bubble user tetap DM Sans. */
+
+  .font-family-serif {
+    --reading-font-family: 'Crimson Pro', Georgia, serif;
+  }
+
+  .font-family-lora {
+    --reading-font-family: 'Lora', Georgia, serif;
+  }
+
+  .font-family-slab {
+    --reading-font-family: 'Roboto Slab', Georgia, serif;
+  }
+
+  .font-family-nunito {
+    --reading-font-family: 'Nunito', system-ui, sans-serif;
+  }
+
+  .font-family-sans {
+    --reading-font-family: 'DM Sans', system-ui, sans-serif;
+  }
+
+  .font-family-system {
+    --reading-font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
+  }
+
+  /* ---- Accent glow (subtle hover lift for primary CTAs) ---- */
+
+  .accent-glow {
+    box-shadow:
+      0 0 0 1px rgb(var(--theme-accent) / 0.15),
+      0 8px 24px -8px rgb(var(--theme-accent) / 0.35);
+  }
+
+  .accent-glow:hover {
+    box-shadow:
+      0 0 0 1px rgb(var(--theme-accent) / 0.25),
+      0 12px 32px -8px rgb(var(--theme-accent) / 0.5);
+  }
+
+  /* ---- Text gradient (used in headers / hero text) ---- */
+
+  .text-gradient-accent {
+    background-image: linear-gradient(
+      135deg,
+      rgb(var(--theme-accent)),
+      rgb(var(--theme-accent) / 0.7)
+    );
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
 }
 
 /* ============================================================================
-   Chat bubble fixes (merged from previously-separate chat-fixes.css)
-   Letakkan plain CSS di LUAR @layer supaya menjadi cascade terakhir
-   dan `!important` di sini menang dari rule Tailwind @layer components
-   sebelumnya.
-   v4: pakai !important untuk poin-poin yang bentrok dengan compiled
-   Tailwind (.msg-user-block {display:flex; max-width:85%}). Akar masalah:
-   .msg-user-block adalah flex item di outer `<div class="flex w-full">`,
-   sehingga 'max-width: fit-content' TIDAK berlaku di flex item versi spec.
-   Fix: matikan flex dari .msg-user-block dan biarkan flow biasa supaya
-   shrink-wrap bekerja.
+   Settings drawer hardening — pastikan bg selalu ikut theme-surface
+   bahkan jika cascade Tailwind @apply resolve terlambat di coffee mode.
+   Plain CSS di luar @layer untuk specificity tinggi.
    ============================================================================ */
+
+.settings-drawer {
+  background-color: rgb(var(--theme-surface)) !important;
+  color: rgb(var(--theme-text)) !important;
+}
+
+.settings-drawer .settings-header,
+.settings-drawer .settings-section,
+.settings-drawer .surface-panel,
+.settings-drawer label,
+.settings-drawer h2,
+.settings-drawer h3,
+.settings-drawer span,
+.settings-drawer p {
+  color: rgb(var(--theme-text));
+}
+
+.settings-drawer .text-theme-muted,
+.settings-drawer label.text-theme-muted,
+.settings-drawer h3.text-theme-muted,
+.settings-drawer p.text-theme-muted,
+.settings-drawer span.text-theme-muted {
+  color: rgb(var(--theme-muted));
+}
+
+/* Slider track + thumb pakai theme-accent eksplisit supaya tidak jatuh
+   ke default browser blue di coffee. */
+.settings-drawer input[type="range"] {
+  accent-color: rgb(var(--theme-accent));
+}
+
+/* Toggle switch: peer-checked bg pakai theme-accent eksplisit. */
+.settings-drawer .peer:checked ~ div {
+  background-color: rgb(var(--theme-accent)) !important;
+}
+
+/* ============================================================================
+   Chat bubble cascade overrides
+   ----------------------------------------------------------------------------
+   Akar masalah historis:
+     .msg-user-block adalah flex item di dalam `<div class="flex w-full">`.
+     Flex item TIDAK shrink-wrap ke `width: fit-content` (spec constraint),
+     sehingga bubble user terlalu lebar. Solusi: matikan flex container di
+     .msg-user-block → block layout supaya shrink-wrap bekerja.
+
+   Letakkan di LUAR @layer agar menang dari @layer components saat specifity
+   sama. `!important` dipakai pada property yang berbenturan langsung dengan
+     Tailwind compiled (.msg-user-block { display:flex; max-width:85% }).
+   ============================================================================ */
+
+/* --- Core shrink-wrap (AI + USER) --- */
 
 .msg-content {
   width: fit-content;
@@ -374,7 +837,8 @@
   align-items: flex-end !important;
   width: auto !important;
   min-width: 0 !important;
-  max-width: min(360px, 75vw) !important;
+  max-width: min(440px, 80vw) !important;
+  text-align: right !important;
 }
 
 .msg-user-block .msg-content {
@@ -382,13 +846,47 @@
   width: auto !important;
   max-width: 100% !important;
   min-width: 0 !important;
-  padding: 0.3rem 0.7rem !important;
-  line-height: 1.25 !important;
+  padding: 0.55rem 0.95rem !important;
+  line-height: 1.35 !important;
+  font-family: 'DM Sans', system-ui, sans-serif !important;
+  font-size: 0.875rem !important;
+  font-weight: 400 !important;
+  letter-spacing: 0.005em !important;
   white-space: pre-wrap !important;
   word-break: break-word !important;
   overflow-wrap: break-word !important;
-  border-radius: 0.875rem !important;
-  border-top-right-radius: 0.4rem !important;
+  border-radius: 1rem !important;
+  border-top-right-radius: 0.35rem !important;
+  background-color: rgb(var(--theme-hover) / 0.72) !important;
+  color: rgb(var(--theme-text)) !important;
+  border: 1px solid rgb(var(--theme-border) / 0.3) !important;
+  box-shadow:
+    0 1px 2px -1px rgb(0 0 0 / 0.08),
+    0 4px 12px -6px rgb(0 0 0 / 0.12) !important;
+  transition:
+    transform 0.18s cubic-bezier(0.22, 1, 0.36, 1),
+    box-shadow 0.18s ease,
+    background-color 0.18s ease !important;
+}
+
+.msg-user-block .msg-content:hover {
+  background-color: rgb(var(--theme-hover) / 0.85) !important;
+  box-shadow:
+    0 1px 2px -1px rgb(0 0 0 / 0.08),
+    0 4px 12px -6px rgb(0 0 0 / 0.12) !important;
+}
+
+@media (min-width: 640px) {
+  .msg-user-block .msg-content {
+    font-size: 0.9375rem !important;
+    padding: 0.6rem 1.05rem !important;
+  }
+}
+
+@media (min-width: 768px) {
+  .msg-user-block .msg-content {
+    padding: 0.65rem 1.1rem !important;
+  }
 }
 
 .msg-user-block .msg-content p {
@@ -399,7 +897,7 @@
 }
 
 .msg-user-block .msg-content p+p {
-  margin-top: 0.35em;
+  margin-top: 0.4em;
 }
 
 .msg-user-block .msg-content p:last-child {
@@ -411,6 +909,17 @@
   text-align: right !important;
   width: 100% !important;
   max-width: 100% !important;
+  margin-top: 0.25rem !important;
+  padding-right: 0.25rem !important;
+  font-size: 0.6875rem !important;
+  color: rgb(var(--theme-muted)) !important;
+  opacity: 0.65 !important;
+  transition: opacity 0.18s ease !important;
+}
+
+.msg-user-block:hover .msg-time,
+.group:hover .msg-user-block .msg-time {
+  opacity: 1 !important;
 }
 
 /* Reading-scale override (specificity 0,2,1 > 0,2,0 supaya slider menang). */
@@ -418,13 +927,36 @@
   font-size: var(--reading-font-size, 16px) !important;
 }
 
+/* Reading font-family override — di-set via class .font-family-* di
+   chatContainer, di-consume oleh .msg-ai-block .msg-content. Specificity
+   0,2,1 supaya menang dari @layer components (.font-serif). */
+.msg-ai-block .msg-content {
+  font-family: var(--reading-font-family, 'Crimson Pro', Georgia, serif) !important;
+}
+
+/* --- Paragraph block-level fallback (universal) --- */
+
+.msg-content p {
+  display: block;
+  width: fit-content;
+  max-width: 100%;
+  margin: 0 0 0.75em 0;
+}
+
+.msg-content p:last-child {
+  margin-bottom: 0;
+}
+
 /* ============================================================================
-   TTS Toolbar: state-based show/hide untuk 5 action buttons.
-   Default = idle: hanya tombol play (volume_up icon) visible.
-   Loading: hourglass spinner visible, click disabled.
-   Playing: pause + stop visible.
-   Paused: resume (play_arrow) + stop visible.
-   Visibility: tampil saat parent bubble di-hover atau toolbar sedang aktif.
+   TTS Toolbar — state-based show/hide for 5 action buttons
+   ----------------------------------------------------------------------------
+   State machine:
+     idle    → play only
+     loading → spinner only (click disabled)
+     playing → pause + stop
+     paused  → resume + stop
+
+   Visibility: tampil saat parent bubble di-hover atau saat toolbar aktif.
    ============================================================================ */
 
 .tts-toolbar {
@@ -444,7 +976,7 @@
   pointer-events: auto;
 }
 
-/* Buttons base styling (apply layout to ALL 5 buttons) */
+/* Button base layout (all 5 buttons) */
 .tts-toolbar .tts-btn,
 .tts-toolbar .tts-pause-btn,
 .tts-toolbar .tts-resume-btn,
@@ -472,7 +1004,7 @@
   transform: scale(1.08);
 }
 
-/* State machine — 4 state × 5 buttons */
+/* --- State: idle --- */
 .tts-toolbar[data-state="idle"] [data-action="play"] {
   display: inline-flex !important;
 }
@@ -484,6 +1016,7 @@
   display: none !important;
 }
 
+/* --- State: loading --- */
 .tts-toolbar[data-state="loading"] [data-action="loading"] {
   display: inline-flex !important;
   pointer-events: none;
@@ -498,6 +1031,7 @@
   display: none !important;
 }
 
+/* --- State: playing --- */
 .tts-toolbar[data-state="playing"] [data-action="pause"],
 .tts-toolbar[data-state="playing"] [data-action="stop"] {
   display: inline-flex !important;
@@ -509,6 +1043,7 @@
   display: none !important;
 }
 
+/* --- State: paused --- */
 .tts-toolbar[data-state="paused"] [data-action="resume"],
 .tts-toolbar[data-state="paused"] [data-action="stop"] {
   display: inline-flex !important;
@@ -529,17 +1064,4 @@
   to {
     transform: rotate(360deg);
   }
-}
-
-/* Ensure chat bubbles shrink to text width while keeping paragraphs
-   block-level for multi-line messages. */
-.msg-content p {
-  display: block;
-  width: fit-content;
-  max-width: 100%;
-  margin: 0 0 0.75em 0;
-}
-
-.msg-content p:last-child {
-  margin-bottom: 0;
 }

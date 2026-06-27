@@ -4,10 +4,10 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>FictionFlow — Dashboard</title>
-  <link rel="stylesheet" href="/css/tailwind.output.css" />
+  <link rel="stylesheet" href="/css/tailwind.output.css?v=15" />
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Crimson+Pro:ital,wght@0,400;0,500;0,600;0,700;1,400;1,500&family=DM+Sans:ital,wght@0,400;0,500;0,700;1,400&display=swap" rel="stylesheet">
   <link href="https://fonts.googleapis.com/icon?family=Material+Icons+Round" rel="stylesheet">
 </head>
 <body class="theme-bg theme-text min-h-screen flex flex-col font-sans transition-colors duration-300 antialiased overflow-y-scroll">
@@ -16,10 +16,10 @@
   <header class="sticky top-0 z-40 border-b border-theme-border/50 glass-panel shadow-sm transition-colors duration-300">
     <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
       <div class="flex items-center gap-2">
-        <div class="w-8 h-8 rounded-lg bg-gradient-to-br from-theme-accent to-theme-accent/70 text-white flex items-center justify-center shadow-md">
+        <div class="w-8 h-8 rounded-lg bg-gradient-to-br from-theme-accent to-theme-accent/70 text-theme-bg flex items-center justify-center shadow-md">
           <span class="material-icons-round text-xl">auto_stories</span>
         </div>
-        <h1 class="text-xl font-bold tracking-tight">FictionFlow</h1>
+        <h1 class="text-xl font-bold tracking-tight font-serif">FictionFlow</h1>
       </div>
       <button id="themeToggleBtn" class="p-2 rounded-full hover:bg-theme-hover transition-colors" title="Ubah Tema" aria-label="Ubah Tema">
         <span class="material-icons-round text-theme-muted" id="themeIcon">dark_mode</span>
@@ -33,10 +33,10 @@
     <div class="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-12">
 
       <!-- Left Column: Create New -->
-      <section class="lg:col-span-5 space-y-6">
+      <section class="lg:col-span-5 space-y-6 reveal" style="animation-delay: 0.05s">
         <div class="space-y-2">
-          <h2 class="text-2xl sm:text-3xl font-bold tracking-tight">Mulai Petualangan Baru</h2>
-          <p class="text-theme-muted">Tentukan karakter AI-mu dan mulailah roleplay.</p>
+          <h2 class="hero-title text-3xl sm:text-4xl">Mulai Petualangan Baru</h2>
+          <p class="text-theme-muted font-serif italic text-base sm:text-lg">Tentukan karakter AI-mu dan mulailah roleplay.</p>
         </div>
 
         <form id="createStoryForm" class="surface-panel rounded-2xl p-6 shadow-sm border border-theme-border/50 space-y-6 transition-all">
@@ -48,9 +48,8 @@
             <div class="flex gap-2">
               <input type="text" id="aiPromptGenerator" name="aiPromptGenerator" placeholder="Contoh: cewek tsundere kakak kelas di sekolah elite"
                 class="input-field" />
-              <button type="button" id="generateBtn" class="btn-primary px-4 whitespace-nowrap flex items-center gap-2">
+              <button type="button" id="generateBtn" class="btn-primary px-4 whitespace-nowrap flex items-center gap-2" aria-label="Generate karakter dari prompt">
                 <span class="material-icons-round text-[18px]">auto_fix_high</span>
-                <span>Generate</span>
               </button>
             </div>
             <p class="text-xs text-theme-muted">AI akan mengisi nama, gender, sifat, dan target otomatis dari prompt ini.</p>
@@ -142,9 +141,9 @@
       </section>
 
       <!-- Right Column: Session List -->
-      <section class="lg:col-span-7 space-y-6">
+      <section class="lg:col-span-7 space-y-6 reveal" style="animation-delay: 0.15s">
         <div class="flex items-center justify-between">
-          <h2 class="text-xl sm:text-2xl font-bold tracking-tight">Sesi Berlangsung</h2>
+          <h2 class="text-xl sm:text-2xl font-bold tracking-tight font-serif">Sesi Berlangsung</h2>
           <span class="px-3 py-1 text-xs font-medium bg-theme-accent/10 text-theme-accent rounded-full border border-theme-accent/20 shadow-sm" id="sessionCount">0 Sesi</span>
         </div>
 
@@ -200,6 +199,6 @@
     </div>
   </div>
 
-  <script type="module" src="/js/pages/dashboard.page.js?v=2"></script>
+  <script type="module" src="/js/pages/dashboard.page.js?v=5"></script>
 </body>
 </html>

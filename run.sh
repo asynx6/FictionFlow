@@ -3,10 +3,14 @@
 # run.sh — FictionFlow Quick Run (Linux / macOS / WSL / Git Bash)
 # ----------------------------------------------------------------------------
 # Otomatis:
-#   1. Install root + backend + frontend dependencies (skip jika sudah ada)
+#   1. Install backend + frontend dependencies (skip jika sudah ada)
 #   2. Bootstrap backend/.env dari backend/.env.example (jika belum ada)
-#   3. Validasi MODEL_PROVIDER_API_KEY → STOP jika masih placeholder
-#   4. Jalankan backend (sudah include static serve untuk frontend)
+#   3. Build frontend CSS (tailwindcss --minify) — wajib sukses sebelum start
+#   4. Validasi MODEL_PROVIDER_API_KEY → STOP jika masih placeholder
+#   5. Jalankan backend (sudah include static serve untuk frontend)
+#
+# Catatan: root package.json sudah dihapus, jadi tidak ada langkah npm install
+# di root. Backend & frontend masing-masing punya package.json sendiri.
 # ----------------------------------------------------------------------------
 
 set -e
@@ -31,16 +35,18 @@ echo -e "${CYAN}  FictionFlow — Quick Run${NC}"
 echo -e "${CYAN}================================${NC}"
 echo ""
 
-# ---- 1. Install root dependencies ----
-if [ ! -d "node_modules" ]; then
-  log "Installing root dependencies..."
-  npm install
-  ok "Root dependencies installed."
-else
-  ok "Root dependencies already installed."
+# ---- 0. Cek Node + npm ----
+if ! command -v node >/dev/null 2>&1; then
+  err "Node.js tidak ditemukan. Install dari https://nodejs.org (versi >=18)."
+  exit 1
 fi
+if ! command -v npm >/dev/null 2>&1; then
+  err "npm tidak ditemukan. Install Node.js (versi >=18) dari https://nodejs.org."
+  exit 1
+fi
+ok "Node $(node -v) / npm $(npm -v)"
 
-# ---- 2. Install backend dependencies ----
+# ---- 1. Install backend dependencies ----
 if [ ! -d "backend/node_modules" ]; then
   log "Installing backend dependencies..."
   (cd backend && npm install)
@@ -49,19 +55,27 @@ else
   ok "Backend dependencies already installed."
 fi
 
-# ---- 3. Install frontend dependencies (optional, future-proof) ----
-if [ -f "frontend/package.json" ] && [ ! -d "frontend/node_modules" ]; then
+# ---- 2. Install frontend dependencies (wajib untuk build:css) ----
+if [ ! -f "frontend/package.json" ]; then
+  err "frontend/package.json tidak ditemukan. Repo mungkin corrupt — checkout ulang frontend/."
+  exit 1
+fi
+if [ ! -d "frontend/node_modules" ]; then
   log "Installing frontend dependencies..."
   (cd frontend && npm install)
   ok "Frontend dependencies installed."
-elif [ -d "frontend/node_modules" ]; then
+else
   ok "Frontend dependencies already installed."
 fi
 
-# ---- 3.5 Build CSS ----
+# ---- 3. Build CSS (wajib sebelum start, tailwind.output.css tidak di-commit) ----
 log "Building frontend CSS..."
-(cd frontend && npm run build:css)
-ok "Frontend CSS built."
+if ! (cd frontend && npm run build:css); then
+  err "Build CSS gagal. Periksa sintaks di frontend/public/css/tailwind.input.css."
+  err "Atau jalankan manual: cd frontend && npm run build:css"
+  exit 1
+fi
+ok "Frontend CSS built → frontend/public/css/tailwind.output.css"
 
 # ---- 4. Bootstrap .env ----
 if [ -f "backend/.env" ]; then
@@ -71,7 +85,7 @@ elif [ -f "backend/.env.example" ]; then
   cp backend/.env.example backend/.env
   ok "backend/.env created."
 else
-  err "backend/.env.example not found. Cannot bootstrap .env."
+  err "backend/.env.example tidak ditemukan. Tidak bisa bootstrap .env."
   exit 1
 fi
 
@@ -86,7 +100,6 @@ KEY=$(grep -E '^[[:space:]]*MODEL_PROVIDER_API_KEY[[:space:]]*=' backend/.env \
   | sed -E 's/[[:space:]]*$//')
 set -e
 
-PLACEHOLDER_PATTERNS='^(sk-xxx|sk-XXXX|sk-xxxxxxxx|xxxxxxxxx|your-|<.*>)$'
 IS_PLACEHOLDER=0
 if [ -z "$KEY" ]; then
   IS_PLACEHOLDER=1

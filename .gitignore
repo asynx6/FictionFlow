@@ -42,7 +42,7 @@ coverage/
 *.tsbuildinfo
 
 # --- Frontend (Tailwind compiled output is large + auto-built) ---
-frontend/css/tailwind.output.css
+frontend/public/css/tailwind.output.css
 frontend/dist/
 
 # --- Local-only skills / agent customizations ---

@@ -2,10 +2,14 @@
 # run.ps1 - FictionFlow Quick Run (Windows PowerShell)
 # ----------------------------------------------------------------------------
 # Otomatis:
-#   1. Install root + backend + frontend dependencies (skip jika sudah ada)
+#   1. Install backend + frontend dependencies (skip jika sudah ada)
 #   2. Bootstrap backend/.env dari backend/.env.example (jika belum ada)
-#   3. Validasi MODEL_PROVIDER_API_KEY -> STOP jika masih placeholder
-#   4. Jalankan backend (sudah include static serve untuk frontend)
+#   3. Build frontend CSS (tailwindcss --minify) — wajib sukses sebelum start
+#   4. Validasi MODEL_PROVIDER_API_KEY -> STOP jika masih placeholder
+#   5. Jalankan backend (sudah include static serve untuk frontend)
+#
+# Catatan: root package.json sudah dihapus, jadi tidak ada langkah npm install
+# di root. Backend & frontend masing-masing punya package.json sendiri.
 # ----------------------------------------------------------------------------
 
 $ErrorActionPreference = 'Stop'
@@ -23,16 +27,18 @@ Write-Host '  FictionFlow - Quick Run' -ForegroundColor Cyan
 Write-Host '================================' -ForegroundColor Cyan
 Write-Host ''
 
-# ---- 1. Install root dependencies ----
-if (-not (Test-Path 'node_modules')) {
-    Log 'Installing root dependencies...'
-    npm install
-    Ok 'Root dependencies installed.'
-} else {
-    Ok 'Root dependencies already installed.'
+# ---- 0. Cek Node + npm ----
+try { $nodeVer = (node -v) 2>$null } catch { $nodeVer = $null }
+if (-not $nodeVer) {
+    ErrExit 'Node.js tidak ditemukan. Install dari https://nodejs.org (versi >=18).'
 }
+try { $npmVer = (npm -v) 2>$null } catch { $npmVer = $null }
+if (-not $npmVer) {
+    ErrExit 'npm tidak ditemukan. Install Node.js (versi >=18) dari https://nodejs.org.'
+}
+Ok ("Node $nodeVer / npm $npmVer")
 
-# ---- 2. Install backend dependencies ----
+# ---- 1. Install backend dependencies ----
 if (-not (Test-Path 'backend/node_modules')) {
     Log 'Installing backend dependencies...'
     Push-Location backend
@@ -42,21 +48,37 @@ if (-not (Test-Path 'backend/node_modules')) {
     Ok 'Backend dependencies already installed.'
 }
 
-# ---- 3. Install frontend dependencies (optional, future-proof) ----
-if ((Test-Path 'frontend/package.json') -and (-not (Test-Path 'frontend/node_modules'))) {
+# ---- 2. Install frontend dependencies (wajib untuk build:css) ----
+if (-not (Test-Path 'frontend/package.json')) {
+    ErrExit 'frontend/package.json tidak ditemukan. Repo mungkin corrupt — checkout ulang frontend/.'
+}
+if (-not (Test-Path 'frontend/node_modules')) {
     Log 'Installing frontend dependencies...'
     Push-Location frontend
     try { npm install } finally { Pop-Location }
     Ok 'Frontend dependencies installed.'
-} elseif (Test-Path 'frontend/node_modules') {
+} else {
     Ok 'Frontend dependencies already installed.'
 }
 
-# ---- 3.5 Build CSS ----
+# ---- 3. Build CSS (wajib sebelum start, tailwind.output.css tidak di-commit) ----
 Log 'Building frontend CSS...'
+$buildOk = $true
 Push-Location frontend
-try { npm run build:css } finally { Pop-Location }
-Ok 'Frontend CSS built.'
+try {
+    npm run build:css
+    if ($LASTEXITCODE -ne 0) { $buildOk = $false }
+} catch {
+    $buildOk = $false
+} finally {
+    Pop-Location
+}
+if (-not $buildOk) {
+    Write-Host '[err]  Build CSS gagal. Periksa sintaks di frontend/public/css/tailwind.input.css.' -ForegroundColor Red
+    Write-Host '[err]  Atau jalankan manual: cd frontend; npm run build:css' -ForegroundColor Red
+    exit 1
+}
+Ok 'Frontend CSS built -> frontend/public/css/tailwind.output.css'
 
 # ---- 4. Bootstrap .env ----
 if (Test-Path 'backend/.env') {
@@ -66,7 +88,7 @@ if (Test-Path 'backend/.env') {
     Copy-Item 'backend/.env.example' 'backend/.env'
     Ok 'backend/.env created.'
 } else {
-    ErrExit 'backend/.env.example not found. Cannot bootstrap .env.'
+    ErrExit 'backend/.env.example tidak ditemukan. Tidak bisa bootstrap .env.'
 }
 
 # ---- 5. Validate API key ----

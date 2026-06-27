@@ -4,10 +4,10 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
   <title>FictionFlow — Baca</title>
-  <link rel="stylesheet" href="/css/tailwind.output.css?v=9" />
+  <link rel="stylesheet" href="/css/tailwind.output.css?v=15" />
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Crimson+Pro:ital,wght@0,400;0,500;0,600;0,700;1,400;1,500&family=DM+Sans:ital,wght@0,400;0,500;0,700;1,400&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Crimson+Pro:ital,wght@0,400;0,500;0,600;0,700;1,400;1,500&family=DM+Sans:ital,wght@0,400;0,500;0,700;1,400&family=Lora:ital,wght@0,400;0,500;0,600;1,400&family=Nunito:wght@400;500;700&family=Roboto+Slab:wght@400;500;700&display=swap" rel="stylesheet">
   <link href="https://fonts.googleapis.com/icon?family=Material+Icons+Round" rel="stylesheet">
 </head>
 <body class="theme-bg theme-text h-[100dvh] flex flex-col font-sans transition-colors duration-300 antialiased overflow-hidden">
@@ -25,9 +25,9 @@
           <span class="material-icons-round">arrow_back</span>
         </a>
         <div class="flex items-center gap-2 sm:gap-3">
-          <div class="w-9 h-9 sm:w-10 sm:h-10 rounded-full bg-gradient-to-br from-theme-accent/20 to-theme-accent/5 border border-theme-accent/20 flex items-center justify-center text-theme-accent font-serif font-bold text-lg shadow-sm" id="headerAvatar">?</div>
+          <div class="w-9 h-9 sm:w-10 sm:h-10 rounded-full bg-gradient-to-br from-theme-accent/25 to-theme-accent/5 border border-theme-accent/30 flex items-center justify-center text-theme-accent font-serif font-bold text-lg shadow-sm ring-1 ring-theme-accent/10" id="headerAvatar">?</div>
           <div class="flex flex-col min-w-0">
-            <h1 class="text-sm sm:text-base font-bold leading-tight truncate max-w-[140px] sm:max-w-[240px]" id="headerAiName">Loading...</h1>
+            <h1 class="text-sm sm:text-base font-bold leading-tight truncate max-w-[140px] sm:max-w-[240px] tracking-tight" id="headerAiName">Loading...</h1>
             <span class="text-[11px] sm:text-xs text-theme-muted mt-0.5 truncate max-w-[140px] sm:max-w-[240px]" id="headerContext">...</span>
           </div>
         </div>
@@ -94,16 +94,16 @@
 
   <!-- Settings Panel -->
   <div id="settingsPanel" class="fixed inset-0 z-50 hidden">
-    <div class="absolute inset-0 bg-black/50 backdrop-blur-sm transition-opacity" id="settingsBackdrop"></div>
-    <div class="absolute right-0 top-0 bottom-0 w-full max-w-sm bg-theme-surface border-l border-theme-border/50 shadow-2xl flex flex-col transform transition-transform translate-x-full" id="settingsDrawer">
-      <div class="p-4 border-b border-theme-border/50 flex items-center justify-between">
+    <div class="settings-backdrop" id="settingsBackdrop"></div>
+    <div class="settings-drawer" id="settingsDrawer">
+      <div class="settings-header p-4 border-b border-theme-border/50 flex items-center justify-between">
         <h2 class="text-lg font-bold">Pengaturan Story</h2>
         <button id="closeSettingsBtn" class="p-2 rounded-full hover:bg-theme-hover transition-colors" aria-label="Tutup">
           <span class="material-icons-round">close</span>
         </button>
       </div>
       <div class="p-4 overflow-y-auto flex-1 space-y-6">
-        <div class="space-y-2">
+        <div class="settings-section space-y-2">
           <h3 class="text-xs font-bold uppercase tracking-wider text-theme-muted">Memory System</h3>
           <div class="surface-panel rounded-xl p-4">
             <div class="flex items-center justify-between mb-2">
@@ -116,7 +116,7 @@
             </button>
           </div>
         </div>
-        <div class="space-y-2">
+        <div class="settings-section space-y-2">
           <h3 class="text-xs font-bold uppercase tracking-wider text-theme-muted">Pengalaman Membaca</h3>
           <div class="surface-panel rounded-xl p-4 space-y-4">
             <div class="flex items-center justify-between">
@@ -140,9 +140,21 @@
                 <span>A</span>
               </div>
             </div>
+            <div class="space-y-1">
+              <label for="fontFamilySelect" class="text-xs font-medium text-theme-muted">Jenis Huruf Cerita</label>
+              <select id="fontFamilySelect" class="w-full text-sm bg-theme-bg border border-theme-border/50 rounded-lg p-2 focus:border-theme-accent focus:ring-1 focus:ring-theme-accent transition-all appearance-none cursor-pointer hover:bg-theme-hover">
+                <option value="serif">Crimson Pro — Serif Literary</option>
+                <option value="lora">Lora — Serif Elegant</option>
+                <option value="slab">Roboto Slab — Slab Serif</option>
+                <option value="nunito">Nunito — Sans Rounded</option>
+                <option value="sans">DM Sans — Sans Modern</option>
+                <option value="system">System UI — Default Browser</option>
+              </select>
+              <p class="text-[10px] text-theme-muted mt-1">Ganti jenis huruf untuk pesan AI (narasi &amp; dialog). Tersimpan otomatis.</p>
+            </div>
           </div>
         </div>
-        <div class="space-y-2">
+        <div class="settings-section space-y-2">
           <h3 class="text-xs font-bold uppercase tracking-wider text-theme-muted">Foto Profile AI</h3>
           <div class="surface-panel rounded-xl p-4 space-y-4">
             <div class="flex items-center justify-between">
@@ -174,7 +186,7 @@
             </div>
           </div>
         </div>
-        <div class="space-y-2">
+        <div class="settings-section space-y-2">
           <h3 class="text-xs font-bold uppercase tracking-wider text-theme-muted">Text-to-Speech (TTS)</h3>
           <div class="surface-panel rounded-xl p-4 space-y-4">
             <div class="space-y-1">
@@ -219,22 +231,19 @@
         <span class="material-icons-round animate-spin text-theme-accent text-3xl">autorenew</span>
       </div>
     </div>
-    <button id="scrollToBottomBtn" class="absolute p-3 rounded-full bg-theme-accent text-white shadow-lg opacity-0 transition-opacity duration-300 z-10 flex items-center justify-center hover:scale-105" style="bottom: 20px; right: 16px;">
-      <span class="material-icons-round">arrow_downward</span>
-    </button>
   </main>
 
   <!-- Floating Chat Input Capsule -->
   <footer class="fixed bottom-0 left-0 w-full p-3 sm:p-5 pointer-events-none z-30 bg-gradient-to-t from-theme-bg via-theme-bg/90 to-transparent">
-    <div class="max-w-3xl mx-auto pointer-events-auto shadow-[0_12px_40px_rgba(0,0,0,0.16)] rounded-[2rem] sm:rounded-[2.25rem] bg-theme-surface/85 backdrop-blur-2xl border border-theme-border/50 transition-all duration-300">
+    <div class="max-w-3xl mx-auto pointer-events-auto input-capsule rounded-[2rem] sm:rounded-[2.25rem] bg-theme-surface/85 backdrop-blur-2xl border border-theme-border/50">
       <form id="chatForm" class="flex flex-col relative p-2 sm:p-2.5">
         <div class="flex items-center justify-between px-3 sm:px-4 pt-1.5 pb-2">
           <div class="flex items-center gap-2">
             <div id="typingIndicator" class="hidden items-center gap-1.5 text-xs font-semibold text-theme-accent">
               <span class="flex gap-1">
-                <span class="w-1.5 h-1.5 bg-theme-accent rounded-full animate-bounce"></span>
-                <span class="w-1.5 h-1.5 bg-theme-accent rounded-full animate-bounce" style="animation-delay: 0.15s"></span>
-                <span class="w-1.5 h-1.5 bg-theme-accent rounded-full animate-bounce" style="animation-delay: 0.3s"></span>
+                <span class="typing-dot" style="animation-delay: 0s"></span>
+                <span class="typing-dot" style="animation-delay: 0.15s"></span>
+                <span class="typing-dot" style="animation-delay: 0.3s"></span>
               </span>
               <span>Sedang mengetik...</span>
             </div>
@@ -244,13 +253,16 @@
             </div>
           </div>
           <div class="flex items-center gap-1">
+            <button type="button" id="scrollToBottomBtn" class="scroll-orb-inline" aria-label="Scroll ke bawah" title="Scroll ke bawah">
+              <span class="material-icons-round text-[18px]">arrow_downward</span>
+            </button>
             <button type="button" id="readingModeFooterBtn" class="p-1.5 rounded-full text-theme-muted hover:text-theme-text hover:bg-theme-hover transition-colors" title="Mode Baca Imersif" aria-label="Mode Baca Imersif">
               <span class="material-icons-round text-[18px]">fullscreen</span>
             </button>
           </div>
         </div>
 
-        <div class="flex items-end gap-2 sm:gap-3 px-2 sm:px-3 pb-1">
+        <div class="flex items-stretch gap-2 sm:gap-3 px-2 sm:px-3 pb-1">
           <div class="flex-1 bg-theme-hover/60 rounded-[1.5rem] transition-all duration-300 relative">
             <textarea
               id="messageInput"
@@ -259,14 +271,14 @@
               rows="1"
             ></textarea>
           </div>
-          <button type="submit" id="sendBtn" disabled class="p-3 w-12 h-12 sm:w-14 sm:h-14 flex-shrink-0 rounded-full bg-gradient-to-br from-theme-accent to-theme-accent/85 text-white flex items-center justify-center shadow-lg shadow-theme-accent/25 disabled:opacity-40 disabled:cursor-not-allowed disabled:shadow-none hover:shadow-theme-accent/40 hover:scale-105 transition-all duration-300 active:scale-95 group">
-            <span class="material-icons-round text-[20px] sm:text-[22px] transform group-hover:-translate-y-0.5 group-hover:translate-x-0.5 transition-transform duration-300">send</span>
+          <button type="submit" id="sendBtn" disabled class="send-orb flex-shrink-0 w-12 sm:w-14 min-h-[48px] sm:min-h-[56px] self-stretch rounded-full bg-gradient-to-br from-theme-accent to-theme-accent/85 text-white flex items-center justify-center shadow-lg shadow-theme-accent/25 disabled:opacity-40 disabled:cursor-not-allowed disabled:shadow-none hover:shadow-theme-accent/40 hover:scale-[1.04] transition-all duration-300 active:scale-95 group">
+            <span class="material-icons-round text-[22px] sm:text-[24px] leading-none select-none send-stop-icon" id="sendBtnIcon">send</span>
           </button>
         </div>
       </form>
     </div>
   </footer>
 
-  <script type="module" src="/js/pages/story.page.js?v=23"></script>
+  <script type="module" src="/js/pages/story.page.js?v=28"></script>
 </body>
 </html>

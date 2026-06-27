@@ -3,14 +3,24 @@ import { Events, EventBus } from '../core/eventBus.js';
 class ThemeManager {
   constructor() {
     this.STORAGE_KEY = 'fictionflow_theme';
+    // Migrasi: pengguna lama dengan tema 'child' (yellow-amber) → 'coffee' (warm latte).
+    // Dilakukan sekali di constructor supaya first-load konsisten.
+    this.#migrateLegacyTheme();
     this.currentTheme = this.#resolveInitialTheme();
     // Apply immediately synchronously before any render to avoid theme flash
     document.documentElement.setAttribute('data-theme', this.currentTheme);
   }
 
+  #migrateLegacyTheme() {
+    const saved = localStorage.getItem(this.STORAGE_KEY);
+    if (saved === 'child') {
+      localStorage.setItem(this.STORAGE_KEY, 'coffee');
+    }
+  }
+
   #resolveInitialTheme() {
     const savedTheme = localStorage.getItem(this.STORAGE_KEY);
-    if (['dark', 'light', 'child'].includes(savedTheme)) return savedTheme;
+    if (['dark', 'light', 'coffee'].includes(savedTheme)) return savedTheme;
 
     if (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches) {
       return 'light';
@@ -24,7 +34,7 @@ class ThemeManager {
   }
 
   setTheme(theme) {
-    if (!['dark', 'light', 'child'].includes(theme)) return;
+    if (!['dark', 'light', 'coffee'].includes(theme)) return;
 
     this.currentTheme = theme;
     localStorage.setItem(this.STORAGE_KEY, theme);
@@ -35,8 +45,8 @@ class ThemeManager {
   toggleTheme() {
     const cycle = {
       dark: 'light',
-      light: 'child',
-      child: 'dark'
+      light: 'coffee',
+      coffee: 'dark'
     };
     this.setTheme(cycle[this.currentTheme]);
   }

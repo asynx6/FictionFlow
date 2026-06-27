@@ -10,9 +10,20 @@ import { ttsQueue, TtsQueueManager } from '../core/ttsQueueManager.js';
 
 const FONT_SIZE_KEY = 'fictionflow_font_size';
 const READING_MODE_KEY = 'fictionflow_reading_mode';
+const FONT_FAMILY_KEY = 'fictionflow_font_family';
 const FONT_SIZE_MIN = 14;
 const FONT_SIZE_MAX = 22;
 const FONT_SIZE_DEFAULT = 16;
+const FONT_FAMILY_DEFAULT = 'serif';
+
+const FONT_FAMILY_MAP = {
+  serif: 'font-family-serif',
+  lora: 'font-family-lora',
+  slab: 'font-family-slab',
+  nunito: 'font-family-nunito',
+  sans: 'font-family-sans',
+  system: 'font-family-system',
+};
 
 const FONT_SIZE_MAP = {
   14: 'font-size-xs',
@@ -389,6 +400,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   const fontSizeLabel = document.getElementById('fontSizeLabel');
   const fontSizeSlider = document.getElementById('fontSizeSlider');
   const settingsFontSizeLabel = document.getElementById('settingsFontSizeLabel');
+  const fontFamilySelect = document.getElementById('fontFamilySelect');
   const exitReadingModeBtn = document.getElementById('exitReadingModeBtn');
   const readingModeFooterBtn = document.getElementById('readingModeFooterBtn');
   const toolbarTtsBtn = document.getElementById('toolbarTtsBtn');
@@ -453,6 +465,11 @@ document.addEventListener('DOMContentLoaded', async () => {
   let pendingError = null;
   let pendingUserBubble = null;
   let pendingAiBubble = null;
+  // Stop-button support: abort SSE fetch + rollback pesan yang sudah terlanjur
+  // tersimpan. memorySnapshot = dynamic_memory sebelum extraction, dikirim ke
+  // backend DELETE /rollback saat user klik Stop.
+  let currentAbortController = null;
+  let currentSendState = null;
   // Single-slot refs for AI error dialog handlers — menghindari listener accumulation.
   let _onContinueError = null;
   let _onCancelError = null;
@@ -487,6 +504,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   let readingMode = false;
   let fontSize = FONT_SIZE_DEFAULT;
+  let fontFamily = FONT_FAMILY_DEFAULT;
 
   // --- Reading Experience Logic ---
   const clampFontSize = (v) => Math.max(FONT_SIZE_MIN, Math.min(FONT_SIZE_MAX, v));
@@ -514,6 +532,24 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   const changeFontSize = (delta) => applyFontSize(fontSize + delta);
 
+  // --- Reading font-family picker ---
+  // Apply font-family class ke chatContainer; CSS var --reading-font-family
+  // di-consume oleh .msg-ai-block .msg-content (lihat tailwind.input.css).
+  const resolveInitialFontFamily = () => {
+    const saved = localStorage.getItem(FONT_FAMILY_KEY);
+    return FONT_FAMILY_MAP[saved] ? saved : FONT_FAMILY_DEFAULT;
+  };
+
+  const applyFontFamily = (family) => {
+    if (!FONT_FAMILY_MAP[family]) family = FONT_FAMILY_DEFAULT;
+    fontFamily = family;
+    localStorage.setItem(FONT_FAMILY_KEY, fontFamily);
+    if (fontFamilySelect) fontFamilySelect.value = fontFamily;
+
+    Object.values(FONT_FAMILY_MAP).forEach((cls) => chatContainer.classList.remove(cls));
+    chatContainer.classList.add(FONT_FAMILY_MAP[fontFamily]);
+  };
+
   const applyReadingMode = (active) => {
     readingMode = !!active;
     localStorage.setItem(READING_MODE_KEY, readingMode ? 'true' : 'false');
@@ -539,7 +575,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   const updateThemeIcons = () => {
     const theme = themeManager.getTheme();
-    const icon = theme === 'dark' ? 'dark_mode' : (theme === 'light' ? 'light_mode' : 'child_care');
+    const icon = theme === 'dark' ? 'dark_mode' : (theme === 'light' ? 'light_mode' : 'coffee');
     if (themeIcon) themeIcon.textContent = icon;
     if (toolbarThemeIcon) toolbarThemeIcon.textContent = icon;
   };
@@ -550,6 +586,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   };
 
   applyFontSize(resolveInitialFontSize());
+  applyFontFamily(resolveInitialFontFamily());
   applyReadingMode(localStorage.getItem(READING_MODE_KEY) === 'true');
   updateThemeIcons();
 
@@ -558,6 +595,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   if (increaseFontBtn) increaseFontBtn.addEventListener('click', () => changeFontSize(1));
   if (fontSizeSlider) {
     fontSizeSlider.addEventListener('input', (e) => applyFontSize(parseInt(e.target.value, 10)));
+  }
+  if (fontFamilySelect) {
+    fontFamilySelect.addEventListener('change', (e) => applyFontFamily(e.target.value));
   }
   if (exitReadingModeBtn) exitReadingModeBtn.addEventListener('click', () => applyReadingMode(false));
   if (readingModeFooterBtn) readingModeFooterBtn.addEventListener('click', toggleReadingMode);
@@ -607,18 +647,22 @@ document.addEventListener('DOMContentLoaded', async () => {
   // --- Drawer Logic ---
   function openSettings() {
     settingsPanel.classList.remove('hidden');
-    setTimeout(() => {
-      settingsDrawer.classList.remove('translate-x-full');
-      settingsBackdrop.classList.add('opacity-100');
-    }, 10);
+    // Double-rAF ensures initial state (translateX(100%) + opacity:0) is
+    // painted before toggling .is-open, so transition kicks in cleanly.
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        settingsDrawer.classList.add('is-open');
+        settingsBackdrop.classList.add('is-open');
+      });
+    });
   }
 
   function closeSettings() {
-    settingsDrawer.classList.add('translate-x-full');
-    settingsBackdrop.classList.remove('opacity-100');
+    settingsDrawer.classList.remove('is-open');
+    settingsBackdrop.classList.remove('is-open');
     setTimeout(() => {
       settingsPanel.classList.add('hidden');
-    }, 300);
+    }, 450);
   }
 
   if (settingsToggleBtn) settingsToggleBtn.addEventListener('click', openSettings);
@@ -892,9 +936,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   const updateBubbleContent = (bubble, text, isTyping = false) => {
     const contentEl = bubble.querySelector('.msg-content');
     if (!contentEl) return;
-    let html = formatTextWithMarkdown(text);
-    if (isTyping) html += '<span class="inline-block w-2 h-4 bg-theme-accent animate-pulse ml-1 align-middle"></span>';
-    contentEl.innerHTML = html;
+    contentEl.innerHTML = formatTextWithMarkdown(text);
   };
 
   /**
@@ -942,11 +984,9 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     if (isUser) {
       div.innerHTML = `
-        <div class="msg-user-block" style="display:block !important;max-width:min(280px,70vw) !important;width:auto !important;flex:0 1 auto !important;text-align:right;">
-           <div class="msg-content shadow-sm" style="display:inline-block !important;padding:5px 10px !important;line-height:1.2 !important;border-radius:14px !important;border-top-right-radius:4px !important;background-color:rgb(var(--theme-hover)/0.7) !important;color:rgb(var(--theme-text)) !important;font-family:'DM Sans',sans-serif !important;font-size:14px !important;border:1px solid rgb(var(--theme-border) / 0.3) !important;max-width:100% !important;word-break:break-word !important;white-space:pre-wrap !important;overflow-wrap:break-word !important;">
-             ${contentHtml}
-           </div>
-           <span class="msg-time" style="display:block;width:100%;text-align:right;margin-top:2px;font-size:10px;color:rgb(var(--theme-muted));">${timeLabel}</span>
+        <div class="msg-user-block">
+           <div class="msg-content">${contentHtml}</div>
+           <span class="msg-time">${timeLabel}</span>
         </div>
       `;
     } else {
@@ -960,7 +1000,6 @@ document.addEventListener('DOMContentLoaded', async () => {
              <span class="msg-author">${currentStory.ai_name}</span>
              <div class="msg-content prose-story">
                ${contentHtml}
-               ${msg.is_typing ? '<span class="inline-block w-2 h-4 bg-theme-accent animate-pulse ml-1 align-middle"></span>' : ''}
              </div>
              <div class="flex items-center gap-2 mt-1.5 pl-1">
                <span class="tts-time text-[10px] text-theme-muted opacity-0 group-hover:opacity-100 transition-opacity">${timeLabel}</span>
@@ -1181,34 +1220,133 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   };
 
+  let scrollOrbVisible = false;
+  const showScrollOrb = () => {
+    if (!scrollOrbVisible) {
+      scrollOrbVisible = true;
+      scrollToBottomBtn.classList.add('is-visible');
+    }
+  };
+  const hideScrollOrb = () => {
+    if (scrollOrbVisible) {
+      scrollOrbVisible = false;
+      scrollToBottomBtn.classList.remove('is-visible');
+    }
+  };
+
   chatContainer.addEventListener('scroll', () => {
     const isAtBottom = chatContainer.scrollHeight - chatContainer.scrollTop <= chatContainer.clientHeight + 100;
     autoScroll = isAtBottom;
     updateProgressBar();
 
     if (!isAtBottom) {
-      scrollToBottomBtn.classList.remove('opacity-0');
+      showScrollOrb();
     } else {
-      scrollToBottomBtn.classList.add('opacity-0');
+      hideScrollOrb();
     }
   });
 
   scrollToBottomBtn.addEventListener('click', () => {
     scrollToBottom(true);
+    hideScrollOrb();
   });
 
   messageInput.addEventListener('input', () => {
     messageInput.style.height = 'auto';
     messageInput.style.height = Math.min(messageInput.scrollHeight, 150) + 'px';
-    sendBtn.disabled = messageInput.value.trim() === '';
+    if (!isAiResponding) sendBtn.disabled = messageInput.value.trim() === '';
   });
 
   messageInput.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
-      if (!sendBtn.disabled) {
+      if (isAiResponding) {
+        handleStopClick();
+      } else if (!sendBtn.disabled) {
         chatForm.dispatchEvent(new Event('submit'));
       }
+    }
+  });
+
+  // Send/Stop button swap. Saat isAiResponding=true, sendBtn berubah jadi
+  // tombol stop (icon stop, type button, click handler = abort + rollback).
+  // Saat false, kembalikan ke icon send + type submit.
+  // Pakai SINGLE span dengan swap text content (Material Icons ligature) —
+  // lebih reliable dari dual-span display:none swap, eliminate kemungkinan
+  // kedua icon tampil bersamaan kalau CSS cache stale.
+  const sendBtnIcon = sendBtn.querySelector('#sendBtnIcon');
+
+  const setStopButton = (isStop) => {
+    if (isStop) {
+      sendBtn.type = 'button';
+      sendBtn.disabled = false;
+      if (sendBtnIcon) sendBtnIcon.textContent = 'stop';
+      sendBtn.classList.add('is-stop-active');
+      sendBtn.title = 'Stop';
+      sendBtn.setAttribute('aria-label', 'Stop');
+    } else {
+      sendBtn.type = 'submit';
+      sendBtn.disabled = messageInput.value.trim() === '';
+      if (sendBtnIcon) sendBtnIcon.textContent = 'send';
+      sendBtn.classList.remove('is-stop-active');
+      sendBtn.title = 'Kirim';
+      sendBtn.setAttribute('aria-label', 'Kirim');
+    }
+  };
+
+  // Stop click: abort SSE fetch + remove bubbles + restore input + rollback
+  // pesan yang sudah terlanjur tersimpan di backend (user message + AI message
+  // + dynamic_memory snapshot).
+  const handleStopClick = async () => {
+    if (!isAiResponding || !currentSendState) return;
+
+    // Abort SSE fetch (kalau masih streaming)
+    if (currentAbortController) {
+      try { currentAbortController.abort(); } catch { /* ignore */ }
+      currentAbortController = null;
+    }
+
+    const state = currentSendState;
+    currentSendState = null;
+
+    // Remove bubbles dari DOM
+    if (state.userBubble && state.userBubble.isConnected) state.userBubble.remove();
+    if (state.aiBubble && state.aiBubble.isConnected) state.aiBubble.remove();
+
+    // Restore input agar user bisa edit ulang pesan yang dibatalkan
+    messageInput.value = state.content;
+    messageInput.style.height = 'auto';
+    messageInput.style.height = Math.min(messageInput.scrollHeight, 150) + 'px';
+
+    // Reset UI state
+    isAiResponding = false;
+    typingIndicator.classList.add('hidden');
+    typingIndicator.classList.remove('flex');
+    messageInput.disabled = false;
+    setStopButton(false);
+    messageInput.focus();
+    _clearAiErrorHandlers();
+
+    // Rollback backend: hapus user message + AI message (kalau sudah
+    // tersimpan) + restore dynamic_memory snapshot. Fire-and-forget —
+    // frontend tidak menunggu hasil.
+    if (state.userMessageId || state.aiMessageId || state.memorySnapshot) {
+      try {
+        await api.delete(`/stories/${storyId}/messages/rollback`, {
+          user_message_id: state.userMessageId || null,
+          ai_message_id: state.aiMessageId || null,
+          memory_snapshot: state.memorySnapshot || null,
+        });
+      } catch (err) {
+        console.warn('[stop] rollback gagal:', err?.message || err);
+      }
+    }
+  };
+
+  sendBtn.addEventListener('click', (e) => {
+    if (isAiResponding) {
+      e.preventDefault();
+      handleStopClick();
     }
   });
 
@@ -1231,13 +1369,26 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     messageInput.value = '';
     messageInput.style.height = 'auto';
-    sendBtn.disabled = true;
     scrollToBottom(true);
 
     isAiResponding = true;
     typingIndicator.classList.remove('hidden');
     typingIndicator.classList.add('flex');
     messageInput.disabled = true;
+    setStopButton(true);
+
+    // Snapshot dynamic_memory sebelum extraction, supaya kalau user klik Stop
+    // setelah `done` terlanjur, kita bisa rollback ke state sebelum fakta
+    // baru ditambahkan. currentStory.dynamic_memory di-snapshot dari state
+    // yang sudah di-load di loadStoryAndMessages().
+    const memorySnapshot = currentStory?.dynamic_memory
+      ? (typeof currentStory.dynamic_memory === 'string'
+        ? currentStory.dynamic_memory
+        : JSON.stringify(currentStory.dynamic_memory))
+      : null;
+
+    // Init AbortController untuk SSE fetch
+    currentAbortController = new AbortController();
 
     const tempAiId = `ai-${Date.now()}`;
     const aiMsgObj = { id: tempAiId, role: 'assistant', content: '', is_typing: true, created_at: new Date().toISOString() };
@@ -1249,6 +1400,16 @@ document.addEventListener('DOMContentLoaded', async () => {
     let userMessageId = null;
     let aiMessageId = null;
     let providerError = null;
+
+    // Track state untuk stop handler rollback
+    currentSendState = {
+      content,
+      userBubble,
+      aiBubble,
+      userMessageId: null,
+      aiMessageId: null,
+      memorySnapshot,
+    };
 
     // Dialog button handlers for this request
     const onContinue = async () => {
@@ -1282,8 +1443,21 @@ document.addEventListener('DOMContentLoaded', async () => {
     const onCancel = () => {
       if (pendingUserBubble) pendingUserBubble.remove();
       if (pendingAiBubble) pendingAiBubble.remove();
+      // Restore input agar user bisa edit ulang
+      messageInput.value = content;
+      messageInput.style.height = 'auto';
+      messageInput.style.height = Math.min(messageInput.scrollHeight, 150) + 'px';
       closeAiErrorDialog();
       finishSend();
+      // Rollback backend (user message sudah di-insert sebelum streamChat)
+      if (currentSendState?.userMessageId || userMessageId) {
+        const uid = currentSendState?.userMessageId || userMessageId;
+        api.delete(`/stories/${storyId}/messages/rollback`, {
+          user_message_id: uid,
+          ai_message_id: currentSendState?.aiMessageId || aiMessageId || null,
+          memory_snapshot: currentSendState?.memorySnapshot || memorySnapshot || null,
+        }).catch((err) => console.warn('[cancel] rollback gagal:', err?.message || err));
+      }
     };
 
     _setAiErrorHandlers({ onContinue, onCancel });
@@ -1294,9 +1468,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     const finishSend = () => {
       _clearAiErrorHandlers();
       isAiResponding = false;
+      currentAbortController = null;
+      currentSendState = null;
       typingIndicator.classList.add('hidden');
       typingIndicator.classList.remove('flex');
       messageInput.disabled = false;
+      setStopButton(false);
       messageInput.focus();
     };
 
@@ -1305,6 +1482,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (eventType === 'meta') {
           userMessageId = data?.user_message_id ?? null;
           if (userMessageId) setBubbleRealId(userBubble, userMessageId);
+          if (currentSendState) currentSendState.userMessageId = userMessageId;
         } else if (eventType === 'token') {
           const delta = data?.delta ?? data?.text ?? '';
           if (!delta) return;
@@ -1313,7 +1491,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           const cleaned = finalizeResponse(accumulated);
           if (cleaned.length > displayedText.length) {
             displayedText = cleaned;
-            updateBubbleContent(aiBubble, displayedText, true);
+            updateBubbleContent(aiBubble, displayedText, false);
             scrollToBottom();
           }
         } else if (eventType === 'error') {
@@ -1322,6 +1500,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           openAiErrorDialog(data?.message || 'AI provider sedang tidak tersedia.');
         } else if (eventType === 'done') {
           aiMessageId = data?.message_id ?? null;
+          if (currentSendState) currentSendState.aiMessageId = aiMessageId;
           // Backend mengirim audio_segments[] untuk mixed-mode TTS (Azure URL + Web Speech fallback).
           // Backend kirim `full_content` = full_story (prosa), sudah bersih dari JSON wrapper.
           const finalContent = data?.full_content ?? displayedText;
@@ -1345,7 +1524,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             }
           }
         }
-      });
+      }, currentAbortController?.signal);
 
       if (!displayedText.trim() && !providerError) {
         updateBubbleContent(aiBubble, 'AI tidak mengembalikan balasan.', false);
@@ -1354,6 +1533,10 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (!providerError) finishSend();
 
     } catch (err) {
+      if (err?.name === 'AbortError') {
+        // Stop sudah di-handle handleStopClick; skip error dialog.
+        return;
+      }
       console.error(err);
       providerError = { message: err.message };
       updateBubbleContent(aiBubble, 'AI provider error: menunggu konfirmasi...', false);

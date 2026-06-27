@@ -11,7 +11,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     const theme = themeManager.getTheme();
     if (theme === 'dark') themeIcon.textContent = 'dark_mode';
     else if (theme === 'light') themeIcon.textContent = 'light_mode';
-    else themeIcon.textContent = 'child_care';
+    else themeIcon.textContent = 'coffee';
   };
 
   updateThemeIcon();
@@ -65,10 +65,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   const showLoading = (isLoading) => {
     if (isLoading) {
       generateBtn.disabled = true;
-      generateBtn.innerHTML = `<span class="material-icons-round animate-spin text-[18px]">autorenew</span><span>Mengisi...</span>`;
+      generateBtn.innerHTML = `<span class="material-icons-round animate-spin text-[18px]">autorenew</span>`;
     } else {
       generateBtn.disabled = false;
-      generateBtn.innerHTML = `<span class="material-icons-round text-[18px]">auto_fix_high</span><span>Generate</span>`;
+      generateBtn.innerHTML = `<span class="material-icons-round text-[18px]">auto_fix_high</span>`;
     }
   };
 
@@ -293,7 +293,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       }
 
       storiesList.classList.remove('hidden');
-      storiesList.innerHTML = stories.map((story) => {
+      storiesList.innerHTML = stories.map((story, idx) => {
         // Pakai Date object langsung — aman untuk search berbeda TZ/SQLite
         // ISO string yang tanpa 'Z' suffix.
         const parsedDate = new Date(story.updated_at);
@@ -302,17 +302,18 @@ document.addEventListener('DOMContentLoaded', async () => {
         const aiPersonality = (story.ai_personality ?? '').trim() || 'Tidak ada deskripsi';
         const languageStyle = (story.language_style ?? 'custom').trim();
         const userName = (story.user_name ?? 'Kamu').trim();
+        const revealDelay = Math.min(idx * 0.05, 0.4);
 
         // data-relative-timestamp = ISO original dari server; ticker baca
         // attribute ini setiap 30 detik supaya label selalu fresh tanpa
         // re-render seluruh list.
         return `
-          <article class="session-card group relative" data-id="${story.id}" aria-label="Sesi roleplay dengan ${story.ai_name}">
+          <article class="session-card group reveal" style="animation-delay: ${revealDelay}s" data-id="${story.id}" aria-label="Sesi roleplay dengan ${story.ai_name}">
             <div class="flex items-center gap-4 cursor-pointer" data-open="${story.id}">
               ${renderAvatar(story)}
               <div class="flex-1 min-w-0">
                 <div class="flex items-start justify-between gap-3 mb-1">
-                  <h3 class="text-base sm:text-lg font-bold text-theme-text truncate group-hover:text-theme-accent transition-colors">${story.ai_name}</h3>
+                  <h3 class="text-base sm:text-lg font-bold text-theme-text truncate group-hover:text-theme-accent transition-colors font-serif">${story.ai_name}</h3>
                   <time class="text-[11px] sm:text-xs font-medium text-theme-muted whitespace-nowrap bg-theme-hover px-2 py-0.5 rounded-full border border-theme-border/50" datetime="${story.updated_at}" data-relative-timestamp="${story.updated_at}">${timeLabel}</time>
                 </div>
                 <p class="text-sm text-theme-muted truncate mb-2">${userName} &bull; ${aiPersonality}</p>

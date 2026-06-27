@@ -30,13 +30,15 @@ export const api = {
   get: (path) => request(path),
   post: (path, payload) => request(path, { method: 'POST', body: JSON.stringify(payload) }),
   put: (path, payload) => request(path, { method: 'PUT', body: JSON.stringify(payload) }),
-  delete: (path) => request(path, { method: 'DELETE' }),
+  delete: (path, payload) =>
+    request(path, { method: 'DELETE', body: payload ? JSON.stringify(payload) : undefined }),
 
-  postSSE: (path, payload, onEvent) => new Promise((resolve, reject) => {
+  postSSE: (path, payload, onEvent, signal) => new Promise((resolve, reject) => {
     fetch(`${BASE}${path}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
+      signal,
     })
       .then(async (res) => {
         if (!res.ok || !res.body) {
@@ -90,10 +92,16 @@ export const api = {
               }
             }
             pump();
-          }).catch(reject);
+          }).catch((err) => {
+            if (err.name === 'AbortError') resolve();
+            else reject(err);
+          });
         };
         pump();
       })
-      .catch(reject);
+      .catch((err) => {
+        if (err.name === 'AbortError') resolve();
+        else reject(err);
+      });
   })
 };

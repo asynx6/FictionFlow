@@ -28,6 +28,22 @@ const insertMessageStmt = db.prepare(`
   VALUES (?, ?, ?, ?)
 `);
 
+// Rollback support: hapus pesan by id + revert dynamic_memory ke snapshot
+// sebelum extraction. Dipakai saat user klik Stop setelah pesan terlanjur
+// tersimpan (SSE done sudah terkirim atau user message sudah di-insert).
+const deleteMessageStmt = db.prepare(`
+  DELETE FROM messages WHERE id = ? AND story_id = ?
+`);
+const deleteMessageTtsByMsgStmt = db.prepare(`
+  DELETE FROM message_tts WHERE message_id = ?
+`);
+const getStoryMemoryStmt = db.prepare(`
+  SELECT dynamic_memory FROM stories WHERE id = ?
+`);
+const updateStoryMemoryStmt = db.prepare(`
+  UPDATE stories SET dynamic_memory = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?
+`);
+
 // TTS cache read untuk replay. Lookup by message_id + validasi milik story
 // yang sama (jangan bocor antar-story atau antar-user kalau multi-user
 // nanti). Kalau tidak ada → 404 agar frontend tahu synthesize fresh.
@@ -132,6 +148,46 @@ router.post('/fallback', async (req, res, next) => {
   } catch (err) {
     next(err);
   }
+});
+
+// Rollback: hapus pesan user + AI yang sudah terlanjur tersimpan, dan
+// kembalikan dynamic_memory ke snapshot sebelum extraction. Frontend pakai
+// ini saat user klik Stop setelah SSE done terlanjur terkirim.
+// Body: { ai_message_id?, memory_snapshot? }
+// - ai_message_id: id pesan AI yang harus dihapus (kalau sudah tersimpan)
+// - memory_snapshot: string JSON dynamic_memory sebelum extract (kalau ada)
+router.delete('/rollback', async (req, res, next) => {
+  const userMessageId = Number.parseInt(req.body?.user_message_id ?? '0', 10);
+  const aiMessageId = Number.parseInt(req.body?.ai_message_id ?? '0', 10);
+  const memorySnapshot = req.body?.memory_snapshot;
+
+  if (!Number.isInteger(userMessageId) || userMessageId <= 0) {
+    return next(new HttpError(400, 'user_message_id diperlukan.'));
+  }
+
+  const storyId = req.story.id;
+  const tx = db.transaction(() => {
+    // Hapus AI message + TTS cache-nya kalau ada
+    if (Number.isInteger(aiMessageId) && aiMessageId > 0) {
+      deleteMessageTtsByMsgStmt.run(aiMessageId);
+      deleteMessageStmt.run(aiMessageId, storyId);
+    }
+    // Hapus user message + TTS cache-nya (TTS untuk user message jarang ada)
+    deleteMessageTtsByMsgStmt.run(userMessageId);
+    deleteMessageStmt.run(userMessageId, storyId);
+    // Restore memory snapshot kalau dikirim (string JSON valid)
+    if (typeof memorySnapshot === 'string' && memorySnapshot.length > 0) {
+      updateStoryMemoryStmt.run(memorySnapshot, storyId);
+    }
+  });
+  tx();
+
+  res.json({
+    success: true,
+    data: { rolled_back: { user_message_id: userMessageId, ai_message_id: aiMessageId || null } },
+    message: 'Rollback berhasil.',
+    meta: { timestamp: new Date().toISOString() },
+  });
 });
 
 router.get('/tts-latest', (req, res) => {
