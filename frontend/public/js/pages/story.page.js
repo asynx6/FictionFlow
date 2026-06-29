@@ -325,12 +325,14 @@ async function speakMessage(msgId, textOrSegments) {
     ttsSegments = segments.map((s) => {
       const text = (s?.text ?? '').toString().trim();
       if (!text) return null;
-      const segGender = s.gender === 'female' ? 'female' : 'male';
+      // Satu suara sesuai story setting — abaikan voice_config per-gender.
+      // Gender ditentukan dari voice name: Gadis/Jenny → female, Ardi/Guy → male.
+      const femaleVoices = new Set(['id-ID-GadisNeural', 'en-US-JennyNeural']);
       return {
         tag: s.type === 'dialogue' ? 'DIALOG' : 'NARASI',
         text: text,
-        voice: s.voice_config?.voice_name || voice,
-        gender: segGender,
+        voice: voice,
+        gender: femaleVoices.has(voice) ? 'female' : 'male',
       };
     }).filter(Boolean);
   } else if (typeof textOrSegments === 'string') {

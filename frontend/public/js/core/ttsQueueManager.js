@@ -192,6 +192,7 @@ export class TtsQueueManager {
       const blob = this._prefetchedBlob;
       this._prefetchedBlob = null;
       this._prefetchedIndex = -1;
+      this._prefetchNext(); // pre-fetch segmen N+1 berikutnya
       this._playBlob(blob, segment);
       return;
     }
@@ -229,6 +230,7 @@ export class TtsQueueManager {
             this._currentTimeoutId = null;
             this._activeAbort = null;
             if (!this.playing || this.index >= this.segments.length) return;
+            this._prefetchNext(); // pre-fetch segmen N+1 di background
             this._playBlob(blob, segment);
           })
           .catch((err) => {
@@ -483,6 +485,19 @@ export class TtsQueueManager {
     }
   }
 
+  /** Cleanup semua resource termasuk prefetch blob/abort. */
+  _disposeAll() {
+    this._disposeCurrent();
+    if (this._prefetchAbort) {
+      try { this._prefetchAbort.abort(); } catch { /* ignore */ }
+      this._prefetchAbort = null;
+    }
+    if (this._prefetchedBlob) {
+      this._prefetchedBlob = null;
+    }
+    this._prefetchedIndex = -1;
+  }
+
   pause() {
     if (!this.playing) return;
     this.paused = true;
@@ -529,7 +544,7 @@ export class TtsQueueManager {
   stop() {
     this.playing = false;
     this.paused = false;
-    this._disposeCurrent();
+    this._disposeAll();
     try {
       window.speechSynthesis.cancel();
     } catch { /* ignore */ }
@@ -540,7 +555,7 @@ export class TtsQueueManager {
 
   skipToNext() {
     if (!this.playing && !this.paused) return;
-    this._disposeCurrent();
+    this._disposeAll();
     try {
       window.speechSynthesis.cancel();
     } catch { /* ignore */ }
@@ -559,6 +574,7 @@ export class TtsQueueManager {
     this.paused = false;
     this.index = 0;
     this.clearHighlight();
+    this._disposeAll();
     this.emit('state', this.snapshot());
     dispatchPlaybackFinished();
   }
@@ -575,8 +591,8 @@ export class TtsQueueManager {
 export const ttsQueue = new TtsQueueManager();
 
 function hardResetOnHide() {
-  if (ttsQueue && typeof ttsQueue._disposeCurrent === 'function') {
-    ttsQueue._disposeCurrent();
+  if (ttsQueue && typeof ttsQueue._disposeAll === 'function') {
+    ttsQueue._disposeAll();
     ttsQueue.playing = false;
     ttsQueue.paused = false;
     ttsQueue.index = 0;

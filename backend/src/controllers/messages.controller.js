@@ -6,10 +6,8 @@ import {
   resolveModelId,
 } from '../services/modelProvider.service.js';
 import { extractAndMergeFacts } from '../services/memoryExtractor.service.js';
-import { synthesizeText } from '../services/edgeTts.service.js';
 import { HttpError } from '../middlewares/errorHandler.js';
 import { stripReasoningContent } from '../util/text.js';
-import { synthesizeText } from '../services/edgeTts.service.js';
 import { synthesizeText } from '../services/edgeTts.service.js';
 
 /**
@@ -357,11 +355,13 @@ export async function streamChat({
   });
 
   // Pre-synthesize semua audio segment ke LRU cache (non-blocking).
+  // Semua segmen pakai suara yang sama dari story setting (story.tts_voice).
   // Begitu user klik "Dengarkan", semua segment sudah panas → < 1ms cache hit.
   // Tidak delay SSE done — Promise.allSettled jalan setelah response flush.
+  const ttsVoice = (story.tts_voice || 'id-ID-ArdiNeural').toString().trim();
   Promise.allSettled(
     ttsEntries.map((seg) =>
-      synthesizeText(seg.text, seg.voice_config.voice_name).catch((err) =>
+      synthesizeText(seg.text, ttsVoice).catch((err) =>
         console.warn('[messages] pre-synth cache miss:', err.message)
       )
     )
