@@ -80,6 +80,19 @@ const MIGRATIONS = [
       }
     },
   },
+  {
+    version: 6,
+    description: 'Add roleplay_mode column (dual prompt mode: default/casual)',
+    up: (db) => {
+      const hasColumn = (table, column) => {
+        const cols = db.prepare(`PRAGMA table_info(${table})`).all();
+        return cols.some((c) => c.name === column);
+      };
+      if (!hasColumn('stories', 'roleplay_mode')) {
+        db.exec("ALTER TABLE stories ADD COLUMN roleplay_mode TEXT NOT NULL DEFAULT 'default'");
+      }
+    },
+  },
 ];
 
 export function runMigrations(db) {
