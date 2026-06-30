@@ -358,14 +358,24 @@ export async function streamChat({
   // Semua segmen pakai suara yang sama dari story setting (story.tts_voice).
   // Begitu user klik "Dengarkan", semua segment sudah panas → < 1ms cache hit.
   // Tidak delay SSE done — Promise.allSettled jalan setelah response flush.
+  //
+  // Concurrency limiter: max 3 parallel WebSocket ke Edge TTS per response.
+  // Microsoft rate-limits burst > 4 concurrent → 403/500. Queue sederhana
+  // pakai Promise chain tanpa dependency eksternal.
   const ttsVoice = (story.tts_voice || 'id-ID-ArdiNeural').toString().trim();
-  Promise.allSettled(
-    ttsEntries.map((seg) =>
-      synthesizeText(seg.text, ttsVoice).catch((err) =>
-        console.warn('[messages] pre-synth cache miss:', err.message)
-      )
-    )
-  );
+  (async () => {
+    const CONCURRENCY = 3;
+    for (let i = 0; i < ttsEntries.length; i += CONCURRENCY) {
+      const batch = ttsEntries.slice(i, i + CONCURRENCY);
+      await Promise.allSettled(
+        batch.map((seg, j) =>
+          synthesizeText(seg.text, ttsVoice).catch((err) =>
+            console.warn(`[messages] pre-synth cache miss [${i + j}/${ttsEntries.length}]:`, err.message)
+          )
+        )
+      );
+    }
+  })();
 
   // Memory extractor: kirim prosa yang sudah di-parse, bukan JSON mentah.
   if (assistantMessageId !== null && fullStoryText.trim().length > 0) {

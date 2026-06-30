@@ -129,19 +129,54 @@ function pickVoiceForSegment(segment) {
 }
 
 /**
- * Sound-level: detect whether Edge TTS response is MP3 audio. Re-attempt
- * retries kalau buffer corrupt — bypass cache untuk request ini supaya
- * Edge TTS upstream dipanggil fresh.
+ * Global concurrency semaphore — batasi max 3 concurrent WebSocket ke
+ * Microsoft Edge TTS. Semua path (pre-synthesis, frontend fetch, warmup)
+ * lewat sini. Kalau > 3 concurrent, antri dalam Promise queue.
+ * Microsoft reject burst > 4 → 403/500.
+ *
+ * Implementasi: counting semaphore sederhana tanpa dependency eksternal.
+ * acquire() decrement counter, release() increment + resolve waiter berikutnya.
  */
-const RETRY_BACKOFF_MS = [300, 800, 2000];
+const MAX_CONCURRENT = 3;
+let semaphoreCount = 0;
+const semaphoreWaiters = [];
+
+function semaphoreAcquire() {
+  if (semaphoreCount < MAX_CONCURRENT) {
+    semaphoreCount++;
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => {
+    semaphoreWaiters.push(resolve);
+  });
+}
+
+function semaphoreRelease() {
+  semaphoreCount--;
+  const next = semaphoreWaiters.shift();
+  if (next) {
+    semaphoreCount++;
+    next();
+  }
+}
+
+/**
+ * Exponential backoff dengan jitter untuk rate-limit recovery.
+ * Base 400ms × 2^attempt + random 0-200ms jitter.
+ * Max 4 attempt (3 retry). Microsoft rate-limit reset biasanya < 2 detik.
+ */
+function retryBackoff(attempt) {
+  const base = 400 * Math.pow(2, attempt);
+  const jitter = Math.floor(Math.random() * 200);
+  return base + jitter;
+}
 
 async function runWithRetry(text, voice, options) {
   let lastErr;
-  for (let attempt = 0; attempt < RETRY_BACKOFF_MS.length + 1; attempt++) {
+  const maxAttempts = 4; // 1 initial + 3 retries
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
     try {
       const buf = await runSynthesize(text, voice, options);
-      // Validate MP3 sebelum return. Kalau corrupt (tapi passed size check),
-      // treat as lastErr dan retry.
       if (buf && buf.length > 0 && isLikelyValidMp3(buf)) {
         return buf;
       }
@@ -151,13 +186,17 @@ async function runWithRetry(text, voice, options) {
       console.warn(`[tts] ${lastErr.message} — retrying.`);
     } catch (err) {
       lastErr = err;
+      const isRateLimit = err.message?.includes('UnexpectedResponse') ||
+        err.message?.includes('NoAudioReceived') ||
+        err.message?.includes('timeout');
+      const label = isRateLimit ? 'rate-limit' : 'error';
       console.warn(
-        `[tts] ${err.message} (attempt ${attempt + 1}/${RETRY_BACKOFF_MS.length + 1})`
+        `[tts] ${label}: ${err.message} (attempt ${attempt + 1}/${maxAttempts})`
       );
     }
-    // Backoff sebelum next attempt (skip setelah final).
-    if (attempt < RETRY_BACKOFF_MS.length) {
-      await new Promise((r) => setTimeout(r, RETRY_BACKOFF_MS[attempt]));
+    if (attempt < maxAttempts - 1) {
+      const delay = retryBackoff(attempt);
+      await new Promise((r) => setTimeout(r, delay));
     }
   }
   throw lastErr || new Error('EdgeTTS: all retries exhausted');
@@ -183,6 +222,17 @@ function classifyError(err) {
 }
 
 async function runSynthesize(text, voice, options) {
+  // Global concurrency gate: antri semaphore sebelum buka WebSocket.
+  // Semua path (pre-synthesis, frontend fetch, warmup) lewat sini.
+  await semaphoreAcquire();
+  try {
+    return await _doSynthesize(text, voice, options);
+  } finally {
+    semaphoreRelease();
+  }
+}
+
+async function _doSynthesize(text, voice, options) {
   // Crash mitigation: @lixen/edge-tts dulu listener 'error' naik tanpa handler
   // → uncaughtException → server.js process.exit(1). edge-tts-universal jauh
   // lebih bersih (async iterator + typed exceptions), TAPI kita tetap pasang

@@ -69,9 +69,10 @@ export class TtsQueueManager {
     this._prefetchedBlob = null;   // Blob untuk segmen berikutnya (pre-fetch)
     this._prefetchedIndex = -1;    // Indeks segmen yang sudah di-pre-fetch
     this._prefetchAbort = null;    // AbortController untuk inflight prefetch
-    // Fetch timeout 5s — dengan pre-synthesis backend, cache hampir selalu
-    // panas. Cold path timeout cepat, user bisa retry.
-    this._fetchTimeoutMs = 5000;
+    // Fetch timeout 10s — backend semaphore + retry dengan exponential
+    // backoff bisa delay sampai ~6s worst case (3 retry × 2s). Kasih
+    // overhead 4s untuk network + semaphore queueing.
+    this._fetchTimeoutMs = 10000;
   }
 
   subscribe(fn) {
