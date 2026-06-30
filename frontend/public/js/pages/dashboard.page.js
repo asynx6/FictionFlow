@@ -389,6 +389,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       ai_gender: document.getElementById('aiGender').value,
       ai_personality: document.getElementById('aiPersonality').value.trim(),
       language_style: finalLanguageStyle,
+      roleplay_mode: document.getElementById('roleplayMode').value,
       target_ending: document.getElementById('targetEnding').value.trim() || undefined,
     };
 

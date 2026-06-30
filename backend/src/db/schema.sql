@@ -31,6 +31,8 @@ CREATE TABLE IF NOT EXISTS stories (
     -- ====== Preferensi operasional ======
     active_model_id    TEXT NOT NULL DEFAULT 'openrouter/auto',
     short_term_window  INTEGER NOT NULL DEFAULT 4,
+    roleplay_mode      TEXT NOT NULL DEFAULT 'default',
+    tts_voice          TEXT NOT NULL DEFAULT 'id-ID-ArdiNeural',
 
     -- ====== Preferensi membaca (per-story) ======
     -- font_family: serif|lora|slab|nunito|sans|system (default serif = Crimson Pro)

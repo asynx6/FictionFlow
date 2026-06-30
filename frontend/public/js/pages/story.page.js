@@ -1123,7 +1123,8 @@ document.addEventListener('DOMContentLoaded', async () => {
 
       headerAiName.textContent = currentStory.ai_name;
       renderAvatarInto(headerAvatar, currentStory);
-      headerContext.textContent = `Roleplay dengan ${currentStory.ai_name} (${currentStory.language_style ?? ''})`.trim();
+      const modeLabel = (currentStory.roleplay_mode ?? 'default') === 'casual' ? 'Casual' : 'Default';
+      headerContext.textContent = `Roleplay dengan ${currentStory.ai_name} (${currentStory.language_style ?? ''} \u00b7 ${modeLabel})`.trim();
 
       // Populate avatar settings from currentStory.
       if (avatarEnabledToggle && avatarUrlInput) {

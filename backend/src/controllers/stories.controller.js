@@ -15,11 +15,13 @@ const insertStoryStmt = db.prepare(`
     id, title, user_name, user_persona, user_gender,
     ai_name, ai_gender, ai_personality,
     language_style, target_ending, active_model_id, short_term_window,
+    roleplay_mode, tts_voice,
     avatar_url, avatar_enabled
   ) VALUES (
     @id, @title, @user_name, @user_persona, @user_gender,
     @ai_name, @ai_gender, @ai_personality,
     @language_style, @target_ending, @active_model_id, @short_term_window,
+    @roleplay_mode, @tts_voice,
     @avatar_url, @avatar_enabled
   )
 `);
@@ -78,6 +80,7 @@ const STORY_EDITABLE = [
   'target_ending',
   'active_model_id',
   'short_term_window',
+  'roleplay_mode',
   'tts_voice',
   'avatar_url',
   'avatar_enabled',
@@ -186,6 +189,13 @@ export function createStory(req, res) {
     (typeof req.body.avatar_enabled === 'string' && ['1','true','yes','on'].includes(req.body.avatar_enabled.toLowerCase()));
   const avatarUrl = avatarEnabled ? sanitizeAvatarUrl(req.body.avatar_url) : null;
 
+  const roleplayMode = (req.body.roleplay_mode ?? 'default').toString().trim();
+  if (!['default', 'casual'].includes(roleplayMode)) {
+    throw new HttpError(400, 'roleplay_mode harus "default" atau "casual".');
+  }
+  const ttsVoice = (req.body.tts_voice ?? DEFAULT_TTS_VOICE).toString().trim();
+  validateTtsVoiceOrThrow(ttsVoice);
+
   const row = {
     id,
     title,
@@ -199,6 +209,8 @@ export function createStory(req, res) {
     target_ending: req.body.target_ending?.toString().trim() || null,
     active_model_id: req.body.active_model_id?.toString().trim() || env.DEFAULT_MODEL_ID,
     short_term_window: clampWindow(req.body.short_term_window ?? env.DEFAULT_SHORT_TERM_WINDOW),
+    roleplay_mode: roleplayMode,
+    tts_voice: ttsVoice,
     avatar_url: avatarUrl,
     avatar_enabled: avatarEnabled && avatarUrl ? 1 : 0,
   };
@@ -269,6 +281,16 @@ export function updateStory(req, res) {
     throw new HttpError(400, 'Tidak ada field yang dikirim untuk diperbarui.');
   }
 
+  if (provided.roleplay_mode !== undefined) {
+    if (typeof provided.roleplay_mode !== 'string') {
+      throw new HttpError(400, 'Field "roleplay_mode" harus berupa string.');
+    }
+    const trimmedMode = provided.roleplay_mode.trim();
+    if (!['default', 'casual'].includes(trimmedMode)) {
+      throw new HttpError(400, 'roleplay_mode harus "default" atau "casual".');
+    }
+    provided.roleplay_mode = trimmedMode;
+  }
   if (provided.language_style !== undefined && !validateLanguageStyle(provided.language_style)) {
     throw new HttpError(400, 'language_style tidak dikenal.');
   }
@@ -329,6 +351,7 @@ export function updateStory(req, res) {
 
   for (const [key, raw] of Object.entries(provided)) {
     if (key === 'short_term_window' || key === 'ai_gender' || key === 'user_gender') continue;
+    if (key === 'roleplay_mode') continue; // sudah divalidasi di atas
     if (key === 'tts_voice') continue; // sudah divalidasi whitelist di atas
     if (key === 'avatar_enabled') continue; // sudah dicoerce di atas
     if (key === 'avatar_url') continue; // sudah disanitize di atas

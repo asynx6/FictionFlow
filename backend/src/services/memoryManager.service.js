@@ -1,5 +1,5 @@
 import db from '../db/database.js';
-import { renderSystemPrompt } from './promptBuilder.service.js';
+import { renderSystemPrompt, renderCasualSystemPrompt } from './promptBuilder.service.js';
 
 const getRecentStmt = db.prepare(`
   SELECT id, role, raw_content, created_at
@@ -34,7 +34,10 @@ export function buildContextPayload(story, latestUserMessage) {
     .reverse()
     .filter((m) => m && typeof m.raw_content === 'string' && m.raw_content.trim().length > 0);
 
-  const systemPrompt = renderSystemPrompt(story);
+  const mode = (story.roleplay_mode ?? 'default').toString().trim();
+  const systemPrompt = mode === 'casual'
+    ? renderCasualSystemPrompt(story)
+    : renderSystemPrompt(story);
 
   const messages = [
     { role: 'system', content: systemPrompt },
