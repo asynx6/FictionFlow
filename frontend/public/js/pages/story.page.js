@@ -678,9 +678,17 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Reading toolbar keyboard shortcuts
   document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && readingMode) {
-      applyReadingMode(false);
-      return;
+    if (e.key === 'Escape') {
+      // Error dialog first (lebih prioritas dari reading mode)
+      if (aiErrorDialog && !aiErrorDialog.classList.contains('hidden')) {
+        if (_onCancelError) _onCancelError();
+        else closeAiErrorDialog();
+        return;
+      }
+      if (readingMode) {
+        applyReadingMode(false);
+        return;
+      }
     }
     const target = e.target;
     if (target && (target.tagName === 'TEXTAREA' || target.tagName === 'INPUT' || target.isContentEditable)) return;
@@ -749,7 +757,13 @@ document.addEventListener('DOMContentLoaded', async () => {
     }, 200);
   };
 
-  if (aiErrorBackdrop) aiErrorBackdrop.addEventListener('click', closeAiErrorDialog);
+  if (aiErrorBackdrop) {
+    // Backdrop = Cancel (bukan close diam-diam — dulu isAiResponding/input stuck)
+    aiErrorBackdrop.addEventListener('click', () => {
+      if (_onCancelError) _onCancelError();
+      else closeAiErrorDialog();
+    });
+  }
 
   const openMemoryModal = async () => {
     closeSettings();
@@ -1359,6 +1373,16 @@ document.addEventListener('DOMContentLoaded', async () => {
     const state = currentSendState;
     currentSendState = null;
 
+    // Tutup error dialog kalau kebuka (Stop vs Cancel race)
+    if (aiErrorDialog && !aiErrorDialog.classList.contains('hidden')) {
+      aiErrorPanel.classList.remove('scale-100', 'opacity-100');
+      aiErrorPanel.classList.add('scale-95', 'opacity-0');
+      aiErrorDialog.classList.add('hidden');
+      pendingError = null;
+      pendingUserBubble = null;
+      pendingAiBubble = null;
+    }
+
     // Remove bubbles dari DOM
     if (state.userBubble && state.userBubble.isConnected) state.userBubble.remove();
     if (state.aiBubble && state.aiBubble.isConnected) state.aiBubble.remove();
@@ -1441,6 +1465,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // Init AbortController untuk SSE fetch
     currentAbortController = new AbortController();
+    const sendSignal = currentAbortController.signal;
 
     const tempAiId = `ai-${Date.now()}`;
     const aiMsgObj = { id: tempAiId, role: 'assistant', content: '', is_typing: true, created_at: new Date().toISOString() };
@@ -1465,7 +1490,10 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // Dialog button handlers for this request
     const onContinue = async () => {
-      if (!pendingUserBubble || !pendingAiBubble) return;
+      // Snapshot bubbles sebelum await — closeAiErrorDialog / stop bisa null-kan pending*
+      // dalam 200ms timeout atau race Stop.
+      const aiEl = pendingAiBubble;
+      if (!aiEl) return;
       continueErrorBtn.disabled = true;
       try {
         const res = await apiClient.post(`/stories/${storyId}/messages/fallback`, {
@@ -1474,17 +1502,17 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
         if (res.success) {
           const fallbackContent = res.data?.content ?? res.content;
-          updateBubbleContent(pendingAiBubble, fallbackContent, false);
-          setBubbleRealId(pendingAiBubble, res.data?.message_id ?? res.message_id);
-          const ttsBtn = pendingAiBubble.querySelector('.tts-btn');
+          updateBubbleContent(aiEl, fallbackContent, false);
+          setBubbleRealId(aiEl, res.data?.message_id ?? res.message_id);
+          const ttsBtn = aiEl.querySelector('.tts-btn');
           if (ttsBtn) ttsBtn.setAttribute('data-text', encodeURIComponent(fallbackContent));
           scrollToBottom(true);
         } else {
-          updateBubbleContent(pendingAiBubble, 'Gagal membuat balasan sementara.', false);
+          updateBubbleContent(aiEl, 'Gagal membuat balasan sementara.', false);
         }
       } catch (err) {
         console.error('Fallback error:', err);
-        updateBubbleContent(pendingAiBubble, 'Gagal membuat balasan sementara.', false);
+        updateBubbleContent(aiEl, 'Gagal membuat balasan sementara.', false);
       } finally {
         continueErrorBtn.disabled = false;
         closeAiErrorDialog();
@@ -1493,6 +1521,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     };
 
     const onCancel = () => {
+      // Snapshot ids BEFORE finishSend null-kan currentSendState.
+      const uid = currentSendState?.userMessageId || userMessageId || null;
+      const aid = currentSendState?.aiMessageId || aiMessageId || null;
+      const memSnap = currentSendState?.memorySnapshot || memorySnapshot || null;
+
       if (pendingUserBubble) pendingUserBubble.remove();
       if (pendingAiBubble) pendingAiBubble.remove();
       // Restore input agar user bisa edit ulang
@@ -1502,13 +1535,10 @@ document.addEventListener('DOMContentLoaded', async () => {
       closeAiErrorDialog();
       finishSend();
       // Rollback backend (user message sudah di-insert sebelum streamChat)
-      // Selalu kirim content fallback supaya backend bisa hapus user message
-      // kalau user_message_id belum sempat ter-capture dari SSE meta event.
-      const uid = currentSendState?.userMessageId || userMessageId;
       apiClient.delete(`/stories/${storyId}/messages/rollback`, {
-        user_message_id: uid || null,
-        ai_message_id: currentSendState?.aiMessageId || aiMessageId || null,
-        memory_snapshot: currentSendState?.memorySnapshot || memorySnapshot || null,
+        user_message_id: uid,
+        ai_message_id: aid,
+        memory_snapshot: memSnap,
         content: content || null,
       }).catch((err) => console.warn('[cancel] rollback gagal:', err?.message || err));
     };
@@ -1518,7 +1548,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     pendingUserBubble = userBubble;
     pendingAiBubble = aiBubble;
 
+    let sendFinished = false;
     const finishSend = () => {
+      if (sendFinished) return;
+      sendFinished = true;
       _clearAiErrorHandlers();
       isAiResponding = false;
       currentAbortController = null;
@@ -1577,7 +1610,11 @@ document.addEventListener('DOMContentLoaded', async () => {
             }
           }
         }
-      }, currentAbortController?.signal);
+      }, sendSignal);
+
+      // Stop: postSSE resolve on AbortError — jangan touch bubble/UI lagi
+      // (handleStopClick sudah rollback + reset).
+      if (sendSignal.aborted || sendFinished) return;
 
       if (!displayedText.trim() && !providerError) {
         updateBubbleContent(aiBubble, 'AI tidak mengembalikan balasan.', false);
@@ -1586,7 +1623,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (!providerError) finishSend();
 
     } catch (err) {
-      if (err?.name === 'AbortError') {
+      if (err?.name === 'AbortError' || sendSignal.aborted || sendFinished) {
         // Stop sudah di-handle handleStopClick; skip error dialog.
         return;
       }
@@ -1595,7 +1632,12 @@ document.addEventListener('DOMContentLoaded', async () => {
       updateBubbleContent(aiBubble, 'AI provider error: menunggu konfirmasi...', false);
       openAiErrorDialog(err.message || 'AI provider sedang tidak tersedia.');
     } finally {
-      _clearAiErrorHandlers();
+      // Jangan clear handler di sini saat error dialog terbuka — dulu Cancel/Continue
+      // jadi dead button karena finally selalu null-kan onclick segera setelah open.
+      // Handler di-clear oleh closeAiErrorDialog / finishSend / handleStopClick.
+      if (!providerError) {
+        _clearAiErrorHandlers();
+      }
       if (_factPollTimerId !== null) clearTimeout(_factPollTimerId);
       _factPollTimerId = setTimeout(async () => {
         _factPollTimerId = null;

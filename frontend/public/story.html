@@ -78,7 +78,7 @@
   </div>
 
   <!-- AI Provider Error Dialog -->
-  <div id="aiErrorDialog" class="fixed inset-0 z-[70] hidden flex items-start justify-center pt-24 sm:pt-28 px-4">
+  <div id="aiErrorDialog" class="fixed inset-0 z-[70] hidden flex items-start justify-center pt-24 sm:pt-28 px-4" role="alertdialog" aria-modal="true" aria-labelledby="aiErrorTitle" aria-describedby="aiErrorMessage">
     <div class="absolute inset-0 bg-black/60 backdrop-blur-sm" id="aiErrorBackdrop"></div>
     <div class="relative bg-theme-surface rounded-2xl border border-theme-border/50 shadow-2xl w-full max-w-md p-5 scale-95 opacity-0 transition-all duration-200" id="aiErrorPanel">
       <div class="flex items-start gap-3">
@@ -86,7 +86,7 @@
           <span class="material-icons-round">error_outline</span>
         </div>
         <div class="flex-1 min-w-0">
-          <h3 class="font-bold text-theme-text mb-1">AI Provider Error</h3>
+          <h3 id="aiErrorTitle" class="font-bold text-theme-text mb-1">AI Provider Error</h3>
           <p class="text-sm text-theme-muted mb-4 leading-relaxed" id="aiErrorMessage">AI provider sedang tidak tersedia.</p>
         </div>
       </div>
@@ -284,7 +284,7 @@
     </div>
   </footer>
 
-  <script type="module" src="/js/pages/story.page.js?v=30"></script>
+  <script type="module" src="/js/pages/story.page.js?v=31"></script>
   <script>
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => {

@@ -43,32 +43,31 @@
 - **Node.js ≥ 18** ([download](https://nodejs.org))
 - API key dari **OpenRouter** ([openrouter.ai](https://openrouter.ai)) — atau provider OpenAI-compatible lain
 
-### Windows
-
-```powershell
-cd C:\Users\Beni\Downloads\FictionFlow
-.\run.ps1
-```
-
-### Linux / macOS / WSL / Git Bash
+### Jalankan
 
 ```bash
 cd /path/to/FictionFlow
-chmod +x run.sh && ./run.sh
-# atau: bash run.sh
+npm start
 ```
 
-> Script otomatis: install deps → copy `.env.example` → cek API key → build CSS → start server. Buka **http://localhost:3000**.
+Dev mode (backend auto-reload):
+
+```bash
+npm run dev
+```
+
+> `npm start` otomatis: install deps (kalau belum) → copy `.env.example` → cek API key → build CSS → start server. Buka **http://localhost:3000**.
 
 ---
 
 ## 🧩 Scripts Manual
 
 ```bash
-npm install --prefix backend          # Install backend deps
-npm start --prefix backend            # Production start
-npm run dev --prefix backend          # Dev mode (auto-reload, node --watch)
-npm run build:css --prefix frontend   # Rebuild tailwind.output.css
+npm install                       # Install backend + frontend (postinstall)
+npm run build:css                 # Rebuild tailwind.output.css
+npm run backend                   # Start backend saja (tanpa bootstrap)
+npm run backend:dev               # Backend dengan node --watch
+npm run seed                      # Seed DB
 ```
 
 ---
@@ -77,7 +76,8 @@ npm run build:css --prefix frontend   # Rebuild tailwind.output.css
 
 ```
 FictionFlow/
-├── run.sh / run.ps1              # Quick start scripts
+├── package.json                  # Root scripts (npm start / npm run dev)
+├── scripts/run.mjs               # Bootstrap + start (cross-platform)
 ├── README.md                     # File ini
 ├── LICENSE                       # MIT
 ├── GEMINI.md                     # Gemini CLI config

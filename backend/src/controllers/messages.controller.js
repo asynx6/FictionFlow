@@ -244,7 +244,6 @@ export async function streamChat({
   });
 
   let accumulator = '';
-  let providerFailed = false;
   const abortCtrl = new AbortController();
   const heartbeat = setInterval(() => {
     res.write(':\n\n');
@@ -273,20 +272,23 @@ export async function streamChat({
     }
   } catch (err) {
     if (err.name === 'AbortError') {
-      accumulator = accumulator.trim();
-    } else {
-      console.warn('[messages] Provider error:', err.message);
-      sendSse(res, 'error', {
-        message: err.message || 'AI provider mengalami gangguan.',
-        code: err.code || 'PROVIDER_ERROR',
-      });
+      // Client disconnected / Stop diklik — jangan simpan partial assistant
+      // message (race dengan frontend rollback yang belum punya aiMessageId).
       clearInterval(heartbeat);
-      res.end();
+      if (!res.writableEnded) res.end();
       return;
     }
+    console.warn('[messages] Provider error:', err.message);
+    sendSse(res, 'error', {
+      message: err.message || 'AI provider mengalami gangguan.',
+      code: err.code || 'PROVIDER_ERROR',
+    });
+    clearInterval(heartbeat);
+    res.end();
+    return;
   }
 
-  if (accumulator.trim().length === 0 && !providerFailed) {
+  if (accumulator.trim().length === 0) {
     sendSse(res, 'error', {
       message: 'AI tidak mengembalikan balasan (respons kosong).',
       code: 'EMPTY_RESPONSE',

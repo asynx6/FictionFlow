@@ -6,7 +6,7 @@
 //
 // Versi: v1 — bump CACHE_VERSION jika ada breaking change supaya old cache di-purge.
 
-const CACHE_VERSION = 'fictionflow-v1';
+const CACHE_VERSION = 'fictionflow-v2';
 const APP_SHELL = [
   '/',
   '/index.html',
@@ -14,7 +14,6 @@ const APP_SHELL = [
   '/css/tailwind.output.css',
   '/js/pages/story.page.js',
   '/js/pages/dashboard.page.js',
-  '/js/core/api.js',
   '/js/core/themeManager.js',
   '/js/core/eventBus.js',
   '/js/core/ttsQueueManager.js',

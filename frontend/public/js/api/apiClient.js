@@ -87,8 +87,12 @@ export const apiClient = {
                 } else if (eventName === 'done') {
                   onEvent('done', data);
                 } else if (eventName === 'error') {
-                  reject(new Error(data?.message ?? 'Stream error'));
-                  reader.cancel();
+                  // Deliver to page handler (opens Cancel/Continue dialog).
+                  // Resolve (jangan reject) supaya try-path cek providerError
+                  // dan finally tidak race-clear handler lewat catch path.
+                  onEvent('error', data);
+                  reader.cancel().catch(() => {});
+                  resolve();
                   return;
                 }
               }
