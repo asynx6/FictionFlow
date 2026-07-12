@@ -1,9 +1,9 @@
 import db from '../db/database.js';
+import { env } from '../config/env.js';
 import { buildContextPayload, estimateTokens } from '../services/memoryManager.service.js';
 import {
   streamChatCompletion,
   chatCompletionOnce,
-  resolveModelId,
 } from '../services/modelProvider.service.js';
 import { extractAndMergeFacts } from '../services/memoryExtractor.service.js';
 import { HttpError } from '../middlewares/errorHandler.js';
@@ -227,7 +227,6 @@ export async function streamChat({
   story,
   userMessageId,
   userContent,
-  modelId,
 }) {
   res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
   res.setHeader('Cache-Control', 'no-cache, no-transform');
@@ -236,7 +235,8 @@ export async function streamChat({
   res.flushHeaders?.();
 
   const messages = buildContextPayload(story, userContent);
-  const finalModel = resolveModelId(modelId);
+  // Model is fixed by env.DEFAULT_MODEL_ID — see services/modelProvider.
+  const finalModel = env.DEFAULT_MODEL_ID;
 
   sendSse(res, 'meta', {
     model: finalModel,
@@ -255,7 +255,6 @@ export async function streamChat({
 
   try {
     const stream = streamChatCompletion({
-      model: finalModel,
       messages,
       signal: abortCtrl.signal,
     });

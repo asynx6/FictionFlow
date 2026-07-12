@@ -207,7 +207,9 @@ export function createStory(req, res) {
     ai_personality: req.body.ai_personality.trim(),
     language_style: req.body.language_style,
     target_ending: req.body.target_ending?.toString().trim() || null,
-    active_model_id: req.body.active_model_id?.toString().trim() || env.DEFAULT_MODEL_ID,
+    // Provider model is fixed by .env — column kept in schema for back-compat
+    // but backend always uses env.DEFAULT_MODEL_ID regardless.
+    active_model_id: env.DEFAULT_MODEL_ID,
     short_term_window: clampWindow(req.body.short_term_window ?? env.DEFAULT_SHORT_TERM_WINDOW),
     roleplay_mode: roleplayMode,
     tts_voice: ttsVoice,
@@ -347,6 +349,13 @@ export function updateStory(req, res) {
   if (provided.avatar_enabled !== undefined) {
     incomingEnabled = coerceBool(provided.avatar_enabled);
     provided.avatar_enabled = incomingEnabled ? 1 : 0;
+  }
+
+  // Provider model is .env-only — silently strip any caller-supplied
+  // active_model_id from the update. This keeps the column reachable in DSL
+  // for future schema regeneration but the runtime value is fixed.
+  if (provided.active_model_id !== undefined) {
+    delete provided.active_model_id;
   }
 
   for (const [key, raw] of Object.entries(provided)) {

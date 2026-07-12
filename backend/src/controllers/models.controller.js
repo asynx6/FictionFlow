@@ -1,17 +1,21 @@
 import { env } from '../config/env.js';
-import { getAvailableModels, resolveModelId } from '../services/modelProvider.service.js';
 
+/**
+ * Provider config endpoint — there is no model picker UI; the only model
+ * in use is whatever DEFAULT_MODEL_ID says in backend/.env. Return that
+ * verbatim so a UI / debug tool can read what the server actually uses.
+ */
 export async function listModels(_req, res) {
-  const models = await getAvailableModels();
   res.json({
     success: true,
     data: {
-      models,
+      models: [],
       default_model_id: env.DEFAULT_MODEL_ID,
     },
     message: 'OK',
-    meta: { count: models.length, timestamp: new Date().toISOString() },
+    meta: {
+      provider_base_url: env.MODEL_PROVIDER_BASE_URL,
+      timestamp: new Date().toISOString(),
+    },
   });
 }
-
-export { resolveModelId };

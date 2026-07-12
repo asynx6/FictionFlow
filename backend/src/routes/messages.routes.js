@@ -2,8 +2,6 @@ import { Router } from 'express';
 import db from '../db/database.js';
 import { HttpError } from '../middlewares/errorHandler.js';
 import { streamChat, generateFallbackMessage } from '../controllers/messages.controller.js';
-import { resolveModelId } from '../controllers/models.controller.js';
-import { env } from '../config/env.js';
 
 const router = Router({ mergeParams: true });
 
@@ -110,16 +108,9 @@ router.post('/', async (req, res, next) => {
     return next(new HttpError(413, `Pesan melebihi ${MAX_MESSAGE_CONTENT} karakter.`));
   }
 
-  if (!env.MODEL_PROVIDER_API_KEY) {
-    return next(
-      new HttpError(
-        500,
-        'MODEL_PROVIDER_API_KEY belum dikonfigurasi di backend/.env.'
-      )
-    );
-  }
-
-  const modelId = resolveModelId(req.body?.model_id ?? req.story.active_model_id);
+  // Provider config (.env) is checked at boot by config/env.js — backend
+  // refuses to start if MODEL_PROVIDER_BASE_URL/API_KEY/DEFAULT_MODEL_ID
+  // are missing. No per-request env check needed here.
 
   const userMessage = insertMessageStmt.run(
     req.story.id,
@@ -135,7 +126,6 @@ router.post('/', async (req, res, next) => {
       story: req.story,
       userMessageId: userMessage.lastInsertRowid,
       userContent: content,
-      modelId,
     });
   } catch (err) {
     next(err);

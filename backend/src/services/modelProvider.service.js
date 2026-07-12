@@ -1,12 +1,25 @@
 import { env } from '../config/env.js';
-import fallbackModels from '../config/fallbackModels.json' with { type: 'json' };
 
-// Guard untuk mencegah request body yang tidak terkontrol dikirim ke
-// provider. Dipakai di streamChatCompletion + chatCompletionOnce sebagai
-// safety net terhadap prompt/context membengkak (bisa picu 413/500 di
-// upstream). 200KB cukup untuk typical chat dengan system prompt panjang
-// + beberapa ribu token history; kalau melewati → throw lebih awal
-// daripada membiarkan upstream mengembalikan error generik.
+/**
+ * Single source of truth for the AI provider the backend talks to:
+ * everything is read from `env` (which is populated from backend/.env).
+ *
+ * Fallback chain behaviour:
+ *   - env.MODEL_CHAIN = [{slot, key, value}, ...]  populated from
+ *     `DEFAULT_MODEL_ID` and optional `DEFAULT_MODEL_ID_1..10` in .env.
+ *   - Empty slots are skipped silently (missing = not configured).
+ *   - `streamChatCompletion` tries the chain in order — primary first, then
+ *     _1, _2, …, until one succeeds or every slot fails. Aborts are
+ *     propagated (user clicked Stop).
+ *   - `chatCompletionOnce` does the same.
+ *   - `resolveModelId(bodyId)` rejects drift: used only as a guard, never
+ *     to substitute.
+ */
+
+// ---------------------------------------------------------------------------
+// Hard cap on outgoing request body (defence-in-depth against runaway prompt
+// growth that upstream rejects generically with 413/500).
+// ---------------------------------------------------------------------------
 const MAX_REQUEST_BYTES = 200_000;
 
 function assertBodyFits(body) {
@@ -20,72 +33,101 @@ function assertBodyFits(body) {
   }
 }
 
-const MAX_RETRIES = 1;
-
-async function listProviderModels() {
-  const url = `${env.MODEL_PROVIDER_BASE_URL}/models`;
-  const res = await fetch(url, {
-    method: 'GET',
-    headers: {
-      Authorization: `Bearer ${env.MODEL_PROVIDER_API_KEY}`,
-      'Content-Type': 'application/json',
-    },
-  });
-  if (!res.ok) {
-    throw new Error(`Provider /models responded ${res.status}`);
-  }
-  const data = await res.json();
-  const list = Array.isArray(data?.data) ? data.data : Array.isArray(data) ? data : [];
-  return list
-    .map((m) => ({
-      id: m.id ?? m.name ?? '',
-      label: m.name ?? m.id ?? m.label ?? '',
-      provider: 'provider',
-    }))
-    .filter((m) => m.id);
-}
-
-export async function getAvailableModels() {
-  if (!env.MODEL_PROVIDER_API_KEY) {
-    return fallbackModels;
-  }
-  try {
-    const remote = await listProviderModels();
-    if (remote.length > 0) return remote;
-  } catch (err) {
-    console.warn(
-      `[modelProvider] Gagal ambil daftar model dari provider (${err.message}). ` +
-        'Pakai fallback statis.'
-    );
-  }
-  return fallbackModels;
-}
-
-export function resolveModelId(modelId) {
-  const aliases = {
-    'minimax-m3': 'bi/minimax-m3',
-    'MiniMax-M3': 'bi/minimax-m3',
-    'MiniMax': 'bi/minimax-m3',
-    'openrouter/auto': env.DEFAULT_MODEL_ID,
-    'nvidia/minimaxai/minimax-m3': 'bi/minimax-m3',
-  };
-  const normalized = (modelId ?? '').toString().trim();
-  return aliases[normalized] || normalized || env.DEFAULT_MODEL_ID;
+/**
+ * Return the configured provider model id (`env.DEFAULT_MODEL_ID`).
+ * This is the primary slot — used for banners / logs that should
+ * describe the configured model, not the chain as a whole.
+ */
+export function getConfiguredModelId() {
+  return env.DEFAULT_MODEL_ID;
 }
 
 /**
- * Melakukan streaming chat completion ke provider.
- * Yield: { type: 'token', text } per delta, atau { type: 'done' } di akhir.
- * Throw: Error dengan pesan informatif jika provider gagal.
+ * Return the model chain in priority order. Empty slots are absent.
+ * @returns {{slot:number, key:string, value:string}[]}
  */
-export async function* streamChatCompletion({ model, messages, signal }) {
-  const body = {
-    model,
-    messages,
-    stream: true,
-  };
-  assertBodyFits(body);
+export function getModelChain() {
+  return env.MODEL_CHAIN.map((m) => ({ ...m }));
+}
 
+/**
+ * Legacy helper retained for callers that previously accepted a
+ * caller-supplied model id. Throws if a non-empty id is supplied that
+ * differs from the configured primary — a guard against silent drift.
+ */
+export function resolveModelId(modelId) {
+  const supplied = (modelId ?? '').toString().trim();
+  if (supplied && supplied !== env.DEFAULT_MODEL_ID) {
+    throw new Error(
+      `Caller supplied modelId="${supplied}" but backend is configured to use ` +
+        `DEFAULT_MODEL_ID="${env.DEFAULT_MODEL_ID}" from .env. Body model_id is ` +
+        'no longer accepted — change DEFAULT_MODEL_ID in backend/.env and restart.'
+    );
+  }
+  return env.DEFAULT_MODEL_ID;
+}
+
+// ---------------------------------------------------------------------------
+// Internal helpers: classify a thrown error so we know whether it's safe to
+// try the next model in the chain. We treat these as NOT retryable on the
+// next model (because trying again would surface the same user-facing error):
+//   - AbortError                      (user clicked Stop)
+//   - MAX_REQUEST_BYTES exceeded       (our defence — bug, not server)
+//   - "body too large" guard error
+// We treat all other errors as retryable on the next model in the chain.
+// ---------------------------------------------------------------------------
+function shouldTryNextModel(err) {
+  if (!err) return false;
+  if (err.name === 'AbortError') return false;
+  const msg = (err.message || '').toLowerCase();
+  if (msg.includes('request body terlalu besar')) return false;
+  if (msg.includes('provider response missing message content')) return false;
+  return true;
+}
+
+/**
+ * Streaming chat completion across the model chain. Yields tokens from the
+ * first model that streams successfully; otherwise falls through to the
+ * next non-empty slot in the chain.
+ *
+ * @param {{ messages: object[], signal?: AbortSignal }} opts
+ */
+export async function* streamChatCompletion({ messages, signal }) {
+  const errors = [];
+  for (const entry of env.MODEL_CHAIN) {
+    const body = { model: entry.value, messages, stream: true };
+    assertBodyFits(body);
+
+    try {
+      // Hand off the iterator to the caller. We materialise the inner
+      // generator up-front so we can catch body-size errors before
+      // yielding anything.
+      yield* streamSingleModel({ modelValue: entry.value, body, signal });
+      // If we got here without throwing, the model succeeded.
+      return;
+    } catch (err) {
+      errors.push({ key: entry.key, value: entry.value, err });
+      if (!shouldTryNextModel(err)) throw err;
+      console.warn(
+        `[modelProvider] ${entry.key}=${entry.value} gagal: ${err.message}. ` +
+          'Lanjut ke model berikutnya dalam chain.'
+      );
+    }
+  }
+  // All slots exhausted.
+  const last = errors[errors.length - 1];
+  const summary = errors
+    .map((e) => `${e.key}=${e.value} → ${e.err.message}`)
+    .join(' | ');
+  throw new Error(
+    `Semua model di fallback chain gagal (${errors.length} slot). ` +
+      `Last error: ${last.err.message}. Chain: ${summary}`
+  );
+}
+
+async function* streamSingleModel({ modelValue, body, signal }) {
+  void modelValue;
+  const MAX_RETRIES = 1;
   let attempt = 0;
   let lastError;
 
@@ -127,9 +169,7 @@ export async function* streamChatCompletion({ model, messages, signal }) {
           if (!line || !line.startsWith('data:')) continue;
 
           const payload = line.slice(5).trim();
-          if (payload === '[DONE]') {
-            return;
-          }
+          if (payload === '[DONE]') return;
 
           let parsed;
           try {
@@ -139,17 +179,11 @@ export async function* streamChatCompletion({ model, messages, signal }) {
           }
 
           const delta = parsed?.choices?.[0]?.delta?.content;
-          if (delta) {
-            yield { type: 'token', text: delta };
-          }
+          if (delta) yield { type: 'token', text: delta };
         }
       }
     } finally {
-      try {
-        reader.releaseLock();
-      } catch {
-        /* ignore */
-      }
+      try { reader.releaseLock(); } catch { /* ignore */ }
     }
 
     yield { type: 'done' };
@@ -160,44 +194,57 @@ export async function* streamChatCompletion({ model, messages, signal }) {
 }
 
 /**
- * Non-streaming chat completion. Mengembalikan string teks lengkap.
- * Dipakai oleh background job (mis. memory extractor) yang tidak butuh
- * streaming token tapi butuh hasil utuh.
+ * Non-streaming chat completion across the model chain (memory extractor).
+ * Tries each slot in order until one returns a usable response.
  *
- * Tidak ada retry internal karena caller sudah di-trigger async
- * (fire-and-forget) di luar critical path user.
+ * @param {{ messages: object[], signal?: AbortSignal, temperature?: number }} opts
+ * @returns {Promise<string>}
  */
-export async function chatCompletionOnce({ model, messages, signal, temperature }) {
-  const body = {
-    model,
-    messages,
-    stream: false,
-  };
-  if (typeof temperature === 'number') body.temperature = temperature;
+export async function chatCompletionOnce({ messages, signal, temperature }) {
+  const errors = [];
+  for (const entry of env.MODEL_CHAIN) {
+    const body = { model: entry.value, messages, stream: false };
+    if (typeof temperature === 'number') body.temperature = temperature;
+    assertBodyFits(body);
 
-  assertBodyFits(body);
+    try {
+      const res = await fetch(`${env.MODEL_PROVIDER_BASE_URL}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${env.MODEL_PROVIDER_API_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(body),
+        signal,
+      });
 
-  const res = await fetch(`${env.MODEL_PROVIDER_BASE_URL}/chat/completions`, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${env.MODEL_PROVIDER_API_KEY}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(body),
-    signal,
-  });
-
-  if (!res.ok) {
-    const errText = await res.text().catch(() => '');
-    throw new Error(
-      `Provider error ${res.status} ${res.statusText}: ${errText.slice(0, 300)}`
-    );
+      if (!res.ok) {
+        const errText = await res.text().catch(() => '');
+        throw new Error(
+          `Provider error ${res.status} ${res.statusText}: ${errText.slice(0, 300)}`
+        );
+      }
+      const data = await res.json();
+      const content = data?.choices?.[0]?.message?.content;
+      if (typeof content !== 'string') {
+        throw new Error('Provider response missing message content.');
+      }
+      return content;
+    } catch (err) {
+      errors.push({ key: entry.key, value: entry.value, err });
+      if (!shouldTryNextModel(err)) throw err;
+      console.warn(
+        `[modelProvider] ${entry.key}=${entry.value} gagal: ${err.message}. ` +
+          'Lanjut ke model berikutnya dalam chain.'
+      );
+    }
   }
-
-  const data = await res.json();
-  const content = data?.choices?.[0]?.message?.content;
-  if (typeof content !== 'string') {
-    throw new Error('Provider response missing message content.');
-  }
-  return content;
+  const last = errors[errors.length - 1];
+  const summary = errors
+    .map((e) => `${e.key}=${e.value} → ${e.err.message}`)
+    .join(' | ');
+  throw new Error(
+    `Semua model di fallback chain gagal (${errors.length} slot). ` +
+      `Last error: ${last.err.message}. Chain: ${summary}`
+  );
 }

@@ -15,7 +15,7 @@
 | 🎙️ **Hybrid Multi-Voice TTS** | 4 Neural voices Microsoft Edge TTS (`id-ID-ArdiNeural/GadisNeural`, `en-US-GuyNeural/JennyNeural`) + prosody 4-tuple `(type × gender)` + Web Speech fallback. |
 | 🛑 **Stop + Rollback** | Abort SSE, hapus bubble user+AI, restore teks ke chatbar, rollback atomik ke DB. |
 | 🎨 **3 Tema** | `dark` / `light` / `coffee` (warm latte). |
-| 🔌 **Pluggable Provider** | OpenRouter / 9Router / OpenAI-compatible. |
+| 🔌 **Pluggable Provider** | API base/key/model dari `backend/.env`. Tidak ada UI picker, tidak ada per-story override. |
 | 🔤 **Font Customization** | 6 font families (`serif`, `lora`, `slab`, `nunito`, `sans`, `system`) + adjustable size (14–22px) per story. |
 | 📖 **Reading Mode** | Immersive view tanpa toolbar, toggle on/off per story. |
 | 🖼️ **Avatar Profile** | Custom URL avatar + preview, enable/disable toggle, fallback ke initial huruf. |
@@ -40,8 +40,32 @@
 
 ### Prasyarat
 
-- **Node.js ≥ 18** ([download](https://nodejs.org))
-- API key dari **OpenRouter** ([openrouter.ai](https://openrouter.ai)) — atau provider OpenAI-compatible lain
+- **Node.js ≥ 20** ([download](https://nodejs.org))
+- Provider base URL + key + model id dari OpenRouter / 9Router / atau OpenAI-compatible
+
+### Konfigurasi Provider (.env-only)
+
+`backend/.env` adalah **satu-satunya** tempat konfigurasi provider. Tidak ada UI picker dan tidak ada override per-story. Backend **tidak akan start** kalau salah satu dari tiga nilai ini kosong atau masih placeholder:
+
+```bash
+MODEL_PROVIDER_BASE_URL=https://openrouter.ai/api/v1   # atau http://localhost:20128/v1 (9Router)
+MODEL_PROVIDER_API_KEY=sk-...
+DEFAULT_MODEL_ID=openrouter/auto                       # atau im/DeepSeek-V4-Flash (9Router)
+DEFAULT_SHORT_TERM_WINDOW=4            # 3–5, jumlah pesan terakhir yang dikirim ke AI
+```
+
+### Fallback chain (model alternatif, opsional)
+
+Tambahkan `DEFAULT_MODEL_ID_1` … `DEFAULT_MODEL_ID_10` di `.env` untuk daftar model cadangan. Maks **11 slot total** (slot 0 + `_1`..`_10`). Slot kosong di-skip otomatis — isi hanya yang lo punya.
+
+```bash
+DEFAULT_MODEL_ID_1=im/another-model        # model 1 (dipakai kalau DEFAULT_MODEL_ID error)
+DEFAULT_MODEL_ID_2=im/backup-cheap-model   # model 2
+# DEFAULT_MODEL_ID_3= ...                  # kosong → di-skip
+DEFAULT_MODEL_ID_10=im/safety-net
+```
+
+Backend mencoba slot 0 dulu, kalau provider balikan error (bukan AbortError) → otomatis coba slot 1, slot 2, dst., sampai salah satu berhasil atau semua habis.
 
 ### Jalankan
 
@@ -50,7 +74,7 @@ cd /path/to/FictionFlow
 npm start
 ```
 
-Dev mode (backend auto-reload):
+Dev mode (auto-reload `.env` & source, incremental CSS rebuild):
 
 ```bash
 npm run dev
@@ -58,13 +82,24 @@ npm run dev
 
 > `npm start` otomatis: install deps (kalau belum) → copy `.env.example` → cek API key → build CSS → start server. Buka **http://localhost:3000**.
 
+### Watch triggers
+
+| Edit | Efek |
+|---|---|
+| `backend/.env` | Backend restart otomatis (env baru ke-load) |
+| `backend/src/**/*.js` | Backend restart otomatis |
+| `frontend/public/css/**` | Tailwind CSS di-rebuild incremental saja |
+| `frontend/public/{story,index}.html`, `js/**` | Browser refresh saja (static serve picks up) |
+
 ---
 
 ## 🧩 Scripts Manual
 
 ```bash
-npm install                       # Install backend + frontend (postinstall)
-npm run build:css                 # Rebuild tailwind.output.css
+npm install                       # Install backend + frontend (postinstall + workspaces)
+npm run dev                       # Dev mode: auto-reload + incremental CSS
+npm run build:css                 # Rebuild tailwind.output.css (1-shot)
+npm run watch:css                 # Tailwind only, tidak restart backend
 npm run backend                   # Start backend saja (tanpa bootstrap)
 npm run backend:dev               # Backend dengan node --watch
 npm run seed                      # Seed DB
@@ -78,6 +113,7 @@ npm run seed                      # Seed DB
 FictionFlow/
 ├── package.json                  # Root scripts (npm start / npm run dev)
 ├── scripts/run.mjs               # Bootstrap + start (cross-platform)
+├── scripts/watch.mjs             # Dev watch: fs.watch + debounced rebuild/restart
 ├── README.md                     # File ini
 ├── LICENSE                       # MIT
 ├── GEMINI.md                     # Gemini CLI config
@@ -101,9 +137,8 @@ FictionFlow/
 │   └── src/
 │       ├── server.js             # Entry point + crash filter
 │       ├── app.js                # Express wiring + static serve
-│       ├── config/               # env loader, fallback models
-│       │   ├── env.js
-│       │   └── fallbackModels.json
+│       ├── config/               # env loader (fail-fast on missing keys)
+│       │   └── env.js
 │       ├── db/                   # schema.sql, database.js, migrate.js, seed.js
 │       ├── routes/               # stories, messages, models, tts, generator, voicePresets
 │       ├── controllers/          # stories, messages (streamChat SSE), models
@@ -151,7 +186,7 @@ Base: `http://localhost:3000/api`
 | Method | Path | Deskripsi |
 |---|---|---|
 | `GET` | `/health` | Status server |
-| `GET` | `/models` | Daftar model dari provider |
+| `GET` | `/models` | Echo: `{ models: [], default_model_id, provider_base_url }` (no live listing; satu-satunya model adalah DEFAULT_MODEL_ID dari .env) |
 
 ### Character Generator
 
@@ -166,7 +201,7 @@ Base: `http://localhost:3000/api`
 | `POST` | `/stories` | Buat story baru |
 | `GET` | `/stories` | List semua story |
 | `GET` | `/stories/:id` | Detail story |
-| `PATCH` | `/stories/:id` | Update (title, persona, model, avatar, font, voice, dll) |
+| `PATCH` | `/stories/:id` | Update (title, persona, roleplay, avatar, font, voice, dll). Body `active_model_id` di-strip silently (model fixed via .env) |
 | `DELETE` | `/stories/:id` | Soft-delete (arsip) |
 | `DELETE` | `/stories/:id/permanent` | Hard-delete (cascade messages + TTS cache) |
 

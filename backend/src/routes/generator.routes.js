@@ -1,5 +1,4 @@
 import { Router } from 'express';
-import { env } from '../config/env.js';
 import { HttpError } from '../middlewares/errorHandler.js';
 import { chatCompletionOnce } from '../services/modelProvider.service.js';
 import { stripReasoningContent } from '../util/text.js';
@@ -68,18 +67,11 @@ router.post('/character', async (req, res, next) => {
     );
   }
 
-  if (!env.MODEL_PROVIDER_API_KEY) {
-    return next(
-      new HttpError(
-        500,
-        'MODEL_PROVIDER_API_KEY belum dikonfigurasi di backend/.env.'
-      )
-    );
-  }
+  // Provider config (.env) verified at boot by config/env.js — fail-fast.
+  // No per-request key check needed.
 
   try {
     const raw = await chatCompletionOnce({
-      model: req.body?.model_id ?? env.DEFAULT_MODEL_ID,
       messages: [
         { role: 'system', content: GENERATOR_PROMPT },
         { role: 'user', content: prompt },
@@ -104,13 +96,16 @@ router.post('/character', async (req, res, next) => {
       meta: { timestamp: new Date().toISOString() },
     });
   } catch (err) {
-    console.warn('[generator] Provider error, fallback ke default generator:', err.message);
-    res.json({
-      success: true,
-      data: buildFallbackCharacter(prompt),
-      message: 'Generate menggunakan fallback karena provider AI bermasalah.',
-      meta: { timestamp: new Date().toISOString() },
-    });
+    // No silent fallback: provider error → 5xx so user knows. Use:
+    //   curl /api/health   to confirm env config
+    //   edit .env          to fix provider
+    console.warn('[generator] Provider error:', err.message);
+    return next(
+      new HttpError(
+        502,
+        `Generator gagal: provider tidak merespons. Cek .env (${err.message}).`
+      )
+    );
   }
 });
 
@@ -126,19 +121,6 @@ function normalizeGenerated(raw, prompt) {
     ai_personality: raw.ai_personality?.toString().trim() || 'baik hati, perhatian, santai',
     language_style: raw.language_style?.toString().trim() || 'santai',
     target_ending: raw.target_ending?.toString().trim() || 'berteman dekat',
-  };
-}
-
-function buildFallbackCharacter(prompt) {
-  return {
-    user_name: 'Beni',
-    user_gender: 'male',
-    user_persona: 'Beni adalah orang yang baik, suka bercanda, dan mudah bergaul.',
-    ai_name: 'Mika',
-    ai_gender: 'female',
-    ai_personality: 'tsundere, baik hati, tapi suka marah-marah lucu',
-    language_style: 'santai',
-    target_ending: 'jadi teman dekat atau lebih dari itu',
   };
 }
 

@@ -1,5 +1,5 @@
 import db from '../db/database.js';
-import { chatCompletionOnce, resolveModelId } from './modelProvider.service.js';
+import { chatCompletionOnce, getConfiguredModelId } from './modelProvider.service.js';
 
 const MAX_DYNAMIC_FACTS = 60;
 const VALID_CATEGORIES = new Set(['user', 'ai', 'world', 'relationship']);
@@ -107,7 +107,7 @@ function mergeFacts(existing, incoming) {
   return merged;
 }
 
-async function callExtractor({ model, existingFacts, userMessage, assistantMessage }) {
+async function callExtractor({ existingFacts, userMessage, assistantMessage }) {
   const userPrompt = [
     'EXISTING_FACTS:',
     JSON.stringify(existingFacts),
@@ -121,20 +121,29 @@ async function callExtractor({ model, existingFacts, userMessage, assistantMessa
     'Kembalikan JSON array saja.',
   ].join('\n');
 
-  const raw = await chatCompletionOnce({
-    model,
-    messages: [
-      { role: 'system', content: EXTRACTOR_SYSTEM_PROMPT },
-      { role: 'user', content: userPrompt },
-    ],
-    temperature: 0.2,
-  });
+  let raw;
+  let attempted = [];
+  try {
+    raw = await chatCompletionOnce({
+      messages: [
+        { role: 'system', content: EXTRACTOR_SYSTEM_PROMPT },
+        { role: 'user', content: userPrompt },
+      ],
+      temperature: 0.2,
+    });
+    const activeId = getConfiguredModelId();
+    attempted = [activeId];
+  } catch (err) {
+    // chain already tried every slot
+    console.error('[memoryExtractor] stage=call err=' + (err?.message ?? err));
+    return [];
+  }
 
   const cleaned = stripCodeFences(raw);
   try {
     return sanitizeFacts(JSON.parse(cleaned));
   } catch (err) {
-    console.error('[memoryExtractor] stage=parse model=' + model + ' err=' + err.message);
+    console.error('[memoryExtractor] stage=parse model=' + (attempted[attempted.length - 1] || 'unknown') + ' err=' + err.message);
     return [];
   }
 }
@@ -160,11 +169,9 @@ export async function extractAndMergeFacts({ story, userMessage, assistantMessag
   if (userMessage.length < 8 && assistantMessage.length < 16) return;
 
   const existingFacts = safeParseFacts(story.dynamic_memory);
-  const model = resolveModelId(story.active_model_id);
 
   try {
     const extracted = await callExtractor({
-      model,
       existingFacts,
       userMessage,
       assistantMessage,
@@ -178,7 +185,7 @@ export async function extractAndMergeFacts({ story, userMessage, assistantMessag
     // Trigger summarizer kalau fakta > 50.
     summarizeFacts(story.id).catch(() => {});
   } catch (err) {
-    console.error('[memoryExtractor] stage=merge story=' + story.id + ' model=' + model + ' err=' + (err && err.message ? err.message : err));
+    console.error('[memoryExtractor] stage=merge story=' + story.id + ' err=' + (err && err.message ? err.message : err));
   }
 }
 
@@ -227,7 +234,6 @@ export async function callMemoryAuditor(storyId) {
 
   try {
     const response = await chatCompletionOnce({
-      model: 'openrouter/google/gemini-2.5-flash',
       messages: [
         { role: 'system', content: AUDITOR_SYSTEM_PROMPT },
         { role: 'user', content: `Berikut daftar fakta saat ini:\n\n${factsList}\n\nTentukan key mana saja yang harus dihapus (output JSON array saja).` },
@@ -306,7 +312,6 @@ export async function summarizeFacts(storyId) {
 
   try {
     const response = await chatCompletionOnce({
-      model: 'openrouter/google/gemini-2.5-flash',
       messages: [
         { role: 'system', content: SUMMARIZER_SYSTEM_PROMPT },
         { role: 'user', content: `Rangkum fakta berikut menjadi maksimal ${SUMMARIZER_MAX_FACTS} fakta:\n\n${factsJson}` },
