@@ -779,20 +779,43 @@ document.addEventListener('DOMContentLoaded', async () => {
       const res = await apiClient.get(`/stories/${storyId}`);
       const storyData = res.data?.story ?? res.data;
 
-      let mems = [];
+      // dynamic_memory supports two shapes (legacy + new). Normalize to a
+      // flat list of `{category, value, ...}` for rendering.
       const rawMem = storyData?.dynamic_memory;
+      let parsed;
       if (rawMem) {
-        let parsed;
         if (typeof rawMem === 'string') {
           try { parsed = JSON.parse(rawMem); } catch { parsed = null; }
         } else {
           parsed = rawMem;
         }
-        if (Array.isArray(parsed)) {
-          mems = parsed;
-        } else if (parsed && Array.isArray(parsed.facts)) {
-          mems = parsed.facts;
+      }
+
+      const CAT_LABELS = {
+        user: 'User',
+        ai: 'AI',
+        world: 'World',
+        relationship: 'Relationship',
+      };
+
+      let mems = [];
+      if (Array.isArray(parsed)) {
+        // Legacy: [{category, key, value, learned_at}]
+        mems = parsed;
+      } else if (parsed && !Array.isArray(parsed)) {
+        // New: {user, ai, world, relationship} — flatten.
+        const flat = [];
+        for (const cat of ['user', 'ai', 'world', 'relationship']) {
+          const arr = parsed[cat];
+          if (Array.isArray(arr)) {
+            for (const value of arr) {
+              if (typeof value === 'string' && value.trim()) {
+                flat.push({ category: cat, value: value.trim() });
+              }
+            }
+          }
         }
+        mems = flat;
       }
 
       factCountBadge.textContent = `${mems.length} fakta`;
@@ -807,7 +830,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           .replace(/"/g, '&quot;')
           .replace(/'/g, '&#039;');
         memoryList.innerHTML = mems.map(fact => {
-          const category = fact.category ?? 'umum';
+          const category = CAT_LABELS[fact.category] ?? fact.category ?? 'umum';
           const key = fact.key ?? '';
           const value = fact.value ?? fact.fact ?? fact.content ?? '';
           const learned = fact.learned_at ? new Date(fact.learned_at).toLocaleString('id-ID', { dateStyle: 'short', timeStyle: 'short' }) : '';
@@ -1163,13 +1186,16 @@ document.addEventListener('DOMContentLoaded', async () => {
         } else {
           parsed = dynamicMem;
         }
-        let facts = [];
+        let total = 0;
         if (Array.isArray(parsed)) {
-          facts = parsed;
-        } else if (parsed && Array.isArray(parsed.facts)) {
-          facts = parsed.facts;
+          total = parsed.length;
+        } else if (parsed && typeof parsed === 'object') {
+          for (const cat of ['user', 'ai', 'world', 'relationship']) {
+            const arr = parsed[cat];
+            if (Array.isArray(arr)) total += arr.length;
+          }
         }
-        factCountBadge.textContent = `${facts.length} fakta`;
+        factCountBadge.textContent = `${total} fakta`;
       }
 
       // Voice dropdown di-populate dari currentStory.tts_voice (sumber kebenaran

@@ -33,15 +33,110 @@ const FACT_CATEGORY_LABELS = {
   relationship: 'Tentang Hubungan',
 };
 
-function safeParseJsonArray(raw) {
-  if (!raw) return [];
-  if (Array.isArray(raw)) return raw;
-  try {
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
+/**
+ * Parse both the legacy `[{category,key,value}]` array AND the new
+ * `{user,ai,world,relationship}` object schema, returning the canonical
+ * string-array shape. New object wins, legacy arrays auto-mapped.
+ */
+function parseDynamicMemory(raw) {
+  const empty = { user: [], ai: [], world: [], relationship: [] };
+  if (!raw) return empty;
+  let parsed;
+  if (typeof raw === 'string') {
+    try { parsed = JSON.parse(raw); } catch { return empty; }
+  } else {
+    parsed = raw;
   }
+  if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+    const out = { ...empty };
+    for (const cat of ['user', 'ai', 'world', 'relationship']) {
+      const arr = parsed[cat];
+      if (Array.isArray(arr)) {
+        for (const item of arr) {
+          if (typeof item === 'string' && item.trim()) out[cat].push(item.trim());
+        }
+      }
+    }
+    return out;
+  }
+  if (Array.isArray(parsed)) {
+    const out = { ...empty };
+    for (const item of parsed) {
+      if (!item || typeof item !== 'object') continue;
+      const cat = ['user', 'ai', 'world', 'relationship'].includes(item.category)
+        ? item.category : 'world';
+      const k = typeof item.key === 'string' ? item.key.trim() : '';
+      const v = typeof item.value === 'string' ? item.value.trim() : '';
+      if (!v) continue;
+      out[cat].push(k ? `${k}: ${v}` : v);
+    }
+    return out;
+  }
+  return empty;
+}
+
+const REL_TAGGED_KEYS = ['STATUS', 'AI_PANGGILAN', 'USER_PANGGILAN', 'SEJAK', 'KONTEKS_PERILAKU'];
+
+/**
+ * Parse the tagged state-fact sub-array inside `relationship[]`.
+ * Returns an object keyed by STATUS / AI_PANGGILAN / etc. — only present
+ * keys are included.
+ */
+export function parseRelationshipState(relationshipFacts = []) {
+  const state = {};
+  for (const fact of relationshipFacts) {
+    if (typeof fact !== 'string') continue;
+    for (const key of REL_TAGGED_KEYS) {
+      if (fact.startsWith(`[${key}]:`)) {
+        state[key] = fact.slice(`[${key}]:`.length).trim();
+        break;
+      }
+    }
+  }
+  return state;
+}
+
+/**
+ * Build the "KONTEKS SAAT INI" prompt block injected between STORY IDENTITY
+ * and DYNAMIC FACTS. Returns an empty string when no tagged state is
+ * present (legacy stories start with nothing here and the block stays
+ * unobtrusive until the extractor populates the first tagged fact).
+ */
+export function buildCurrentContextBlock(story) {
+  const memory = parseDynamicMemory(story?.dynamic_memory);
+  const rel = memory.relationship ?? [];
+  const state = parseRelationshipState(rel);
+
+  if (!state.STATUS && !state.AI_PANGGILAN && !state.KONTEKS_PERILAKU && !state.USER_PANGGILAN) {
+    return '';
+  }
+
+  const lines = ['## KONTEKS SAAT INI [BACA INI SEBELUM MEMBALAS]', ''];
+
+  if (state.STATUS) {
+    const sejak = state.SEJAK ? ` (${state.SEJAK})` : '';
+    lines.push(`- Status hubungan dengan user: ${state.STATUS}${sejak}`);
+  }
+
+  if (state.AI_PANGGILAN) {
+    lines.push(`- Cara kamu memanggil user sekarang: "${state.AI_PANGGILAN}" — gunakan ini secara konsisten.`);
+  }
+
+  if (state.USER_PANGGILAN) {
+    lines.push(`- Cara user memanggil kamu sekarang: "${state.USER_PANGGILAN}" — ini sudah normal, jangan bereaksi aneh atau kaget.`);
+  }
+
+  if (state.KONTEKS_PERILAKU) {
+    lines.push('');
+    lines.push('Panduan perilaku kamu:');
+    lines.push(state.KONTEKS_PERILAKU);
+  }
+
+  lines.push('');
+  lines.push('Konteks di atas adalah keadaan yang sedang berlaku. Perilakumu HARUS mencerminkan konteks ini setiap saat.');
+  lines.push('');
+
+  return lines.join('\n');
 }
 
 export function languageStyleInstruction(style) {
@@ -61,24 +156,23 @@ function renderGenderLine(label, genderKey) {
 }
 
 function renderDynamicFacts(dynamicMemory) {
-  const facts = safeParseJsonArray(dynamicMemory).filter(
-    (f) => f && typeof f.key === 'string' && typeof f.value === 'string'
-  );
-  if (facts.length === 0) {
-    return '(belum ada fakta dinamis terekam — sistem akan menambahnya secara otomatis dari percakapan)';
+  const memory = parseDynamicMemory(dynamicMemory);
+  const total =
+    (memory.user?.length ?? 0) +
+    (memory.ai?.length ?? 0) +
+    (memory.world?.length ?? 0) +
+    (memory.relationship?.length ?? 0);
+
+  if (total === 0) {
+    return '(belum ada fakta terekam — sistem akan menambahnya secara otomatis dari percakapan)';
   }
-  const grouped = new Map();
-  for (const f of facts) {
-    const cat = FACT_CATEGORY_LABELS[f.category] ? f.category : 'world';
-    if (!grouped.has(cat)) grouped.set(cat, []);
-    grouped.get(cat).push(f);
-  }
+
   const lines = [];
-  for (const [cat, items] of grouped) {
-    lines.push(`  [${FACT_CATEGORY_LABELS[cat] ?? 'Lainnya'}]`);
-    for (const item of items) {
-      lines.push(`  - ${item.key}: ${item.value}`);
-    }
+  for (const cat of ['user', 'ai', 'world', 'relationship']) {
+    const items = memory[cat] ?? [];
+    if (items.length === 0) continue;
+    lines.push(`  [${FACT_CATEGORY_LABELS[cat]}]`);
+    for (const item of items) lines.push(`  - ${item}`);
   }
   return lines.join('\n');
 }
@@ -111,6 +205,7 @@ export function renderSystemPrompt(story) {
   const aiGender = (story.ai_gender ?? 'neutral').toString();
   const userGender = (story.user_gender ?? 'unspecified').toString();
   const dynamicFacts = renderDynamicFacts(story.dynamic_memory);
+  const currentContextBlock = buildCurrentContextBlock(story);
 
   return [
     '# Role & Objective',
@@ -196,6 +291,8 @@ export function renderSystemPrompt(story) {
     `- Story Target Ending     : ${targetEnding}`,
     '  (Arahkan plot halus ke target ini sepanjang cerita. Jangan dipaksakan.)',
     '',
+    currentContextBlock,
+    '',
     '=== DYNAMIC FACTS (auto-updated) ===',
     'Daftar fakta permanen yang sudah terekam dari percakapan sebelumnya.',
     'JANGAN mengarang fakta baru di luar ini kecuali User menambahkannya;',
@@ -252,6 +349,7 @@ export function renderCasualSystemPrompt(story) {
   const aiGender = (story.ai_gender ?? 'neutral').toString();
   const userGender = (story.user_gender ?? 'unspecified').toString();
   const dynamicFacts = renderDynamicFacts(story.dynamic_memory);
+  const currentContextBlock = buildCurrentContextBlock(story);
 
   return [
     '# Role & Objective — MODE CASUAL',
@@ -331,6 +429,8 @@ export function renderCasualSystemPrompt(story) {
     `- Language Style          : ${styleInstr}`,
     `- Story Target Ending     : ${targetEnding}`,
     '  (Arahkan obrolan halus ke target ini. Jangan dipaksakan.)',
+    '',
+    currentContextBlock,
     '',
     '=== DYNAMIC FACTS (auto-updated) ===',
     'Fakta dari percakapan sebelumnya. Pakai untuk konsistensi.',
