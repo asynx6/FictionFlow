@@ -85,43 +85,59 @@ function bootstrapEnv() {
   ok('backend/.env created.');
 }
 
-function readApiKey() {
+function readEnvValues() {
   const envPath = join(ROOT, 'backend', '.env');
   const text = readFileSync(envPath, 'utf8');
+  const out = {};
   for (const line of text.split(/\r?\n/)) {
-    const m = line.match(/^\s*MODEL_PROVIDER_API_KEY\s*=\s*(.*)\s*$/);
+    const m = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*)\s*$/);
     if (!m) continue;
-    return m[1].trim().replace(/^['"]|['"]$/g, '');
+    out[m[1]] = m[2].trim().replace(/^['"]|['"]$/g, '');
   }
-  return '';
+  return out;
 }
 
-function isPlaceholder(key) {
-  if (!key || !key.trim()) return true;
-  return /xxxx|your-key|change.?me|^<.*>$/i.test(key);
+function isPlaceholder(value) {
+  if (!value || !value.trim()) return true;
+  return /xxxx|your-key|change.?me|^<.*>$/i.test(value);
 }
 
-function validateApiKey() {
-  log('Checking MODEL_PROVIDER_API_KEY...');
-  const key = readApiKey();
-  if (isPlaceholder(key)) {
+function validateProviderEnv() {
+  log('Checking provider env (.env-only configuration)...');
+  const env = readEnvValues();
+  const missing = [];
+  if (isPlaceholder(env.MODEL_PROVIDER_BASE_URL)) missing.push('MODEL_PROVIDER_BASE_URL');
+  if (isPlaceholder(env.MODEL_PROVIDER_API_KEY)) missing.push('MODEL_PROVIDER_API_KEY');
+  if (isPlaceholder(env.DEFAULT_MODEL_ID)) missing.push('DEFAULT_MODEL_ID');
+
+  if (missing.length > 0) {
     console.log('');
     console.log(c.red('================================'));
-    console.log(c.red('  API KEY BELUM DIISI'));
+    console.log(c.red('  .env tidak lengkap'));
     console.log(c.red('================================'));
     console.log('');
-    console.log('  1. Buka file:  backend/.env');
-    console.log('  2. Ganti:  MODEL_PROVIDER_API_KEY=sk-xxxxxxxxxxxxxxxx');
-    console.log('     jadi:   MODEL_PROVIDER_API_KEY=sk-KEYKAMUDISINI');
-    console.log('  3. Simpan, lalu jalankan ulang:  npm start');
+    console.log('  Field WAJIB di backend/.env:');
+    for (const k of missing) console.log(`   - ${k}`);
     console.log('');
-    console.log('  Pakai 9Router lokal (gratis)? Set:');
+    console.log('  Buka file:  backend/.env');
+    console.log('  Contoh (pakai OpenRouter):');
+    console.log('    MODEL_PROVIDER_BASE_URL=https://openrouter.ai/api/v1');
+    console.log('    MODEL_PROVIDER_API_KEY=sk-xxxxxxxxxxxxxxxx');
+    console.log('    DEFAULT_MODEL_ID=openrouter/auto');
+    console.log('');
+    console.log('  Atau 9Router lokal (port 20128):');
     console.log('    MODEL_PROVIDER_BASE_URL=http://localhost:20128/v1');
     console.log('    MODEL_PROVIDER_API_KEY=anything');
+    console.log('    DEFAULT_MODEL_ID=im/DeepSeek-V4-Flash');
     console.log('');
-    process.exit(0);
+    process.exit(1);
   }
-  ok(`API key detected (len=${key.length}).`);
+
+  ok(
+    `provider env OK (url=${env.MODEL_PROVIDER_BASE_URL}, ` +
+      `model=${env.DEFAULT_MODEL_ID}, ` +
+      `key len=${env.MODEL_PROVIDER_API_KEY.length}).`
+  );
 }
 
 function startBackend(dev) {
@@ -184,7 +200,7 @@ function main() {
 
   buildCss();
   bootstrapEnv();
-  validateApiKey();
+  validateProviderEnv();
   startBackend(dev);
 }
 
