@@ -113,6 +113,13 @@ const FACT_EXTRACTION_SYSTEM_PROMPT = [
  * Tagged-state merge for `relationship`: each tag is a singular key — newer
  * entry replaces older. Narrative facts dedup by case-insensitive equality.
  *
+ * Every fact (existing AND incoming) is canonicalized to `[KEY]: value` via
+ * `canonicalizeRelationshipFact` BEFORE partition, so bracket-less / lowercase
+ * / spaced variants of the same tagged key collapse into one Map entry rather
+ * than surviving as both a tagged entry and a narrative duplicate (BUG-04).
+ * The existing array is also self-deduped for narrative on load — previously
+ * duplicates already present in storage survived verbatim.
+ *
  * @param {string[]} existing
  * @param {string[]} incoming
  * @returns {string[]}
@@ -121,27 +128,21 @@ export function mergeRelationshipFacts(existing, incoming) {
   const tagged = new Map();
   const narrative = [];
 
-  for (const f of existing || []) {
-    if (typeof f !== 'string') continue;
+  const addFact = (raw, isLatest) => {
+    if (typeof raw !== 'string') return;
+    const f = canonicalizeRelationshipFact(raw);
     const key = taggedKeyOf(f);
     if (key) {
-      tagged.set(key, f);
-    } else if (f.trim()) {
-      narrative.push(f);
-    }
-  }
-
-  for (const f of incoming || []) {
-    if (typeof f !== 'string') continue;
-    const key = taggedKeyOf(f);
-    if (key) {
-      tagged.set(key, f); // latest wins
+      // latest wins: incoming overwrites existing for the same canonical key.
+      if (isLatest || !tagged.has(key)) tagged.set(key, f);
     } else if (f.trim()) {
       const lower = f.toLowerCase();
-      const dup = narrative.some((n) => n.toLowerCase() === lower);
-      if (!dup) narrative.push(f);
+      if (!narrative.some((n) => n.toLowerCase() === lower)) narrative.push(f);
     }
-  }
+  };
+
+  for (const f of existing || []) addFact(f, false);
+  for (const f of incoming || []) addFact(f, true);
 
   return [...tagged.values(), ...narrative];
 }
@@ -242,7 +243,12 @@ async function callExtractor({ existingMemory, userMessage, assistantMessage }) 
       const arr = parsed[cat];
       if (Array.isArray(arr)) {
         for (const item of arr) {
-          if (typeof item === 'string' && item.trim()) out[cat].push(item.trim());
+          if (typeof item !== 'string') continue;
+          const trimmed = item.trim();
+          if (!trimmed) continue;
+          // Canonicalize relationship facts so LLM formatting drift (no
+          // brackets, lowercase, spaced colon) is normalized before merge.
+          out[cat].push(cat === 'relationship' ? canonicalizeRelationshipFact(trimmed) : trimmed);
         }
       }
     }

@@ -89,6 +89,30 @@ import {
   assert.ok(narrative.some((n) => n.includes('takut ditinggal')));
 }
 
+// ── 3b. BUG-04 collapse: bracket-less + bracketed same key → one entry ──
+{
+  // (a) existing bare + incoming bracketed → single canonical entry.
+  const a = mergeRelationshipFacts(['USER_PANGGILAN: kaishi'], ['[USER_PANGGILAN]: kaishi']);
+  assert.deepEqual(a, ['[USER_PANGGILAN]: kaishi']);
+
+  // (b) existing + incoming same key → latest wins.
+  const b = mergeRelationshipFacts(['[STATUS]: teman'], ['[STATUS]: pacaran']);
+  assert.deepEqual(b, ['[STATUS]: pacaran']);
+
+  // (c) mixed-case existing + bare incoming → latest canonical wins.
+  const c = mergeRelationshipFacts(['[user_panggilan]: x'], ['USER_PANGGILAN: y']);
+  assert.deepEqual(c, ['[USER_PANGGILAN]: y']);
+
+  // (d) narrative case-insensitive dedup of existing.
+  const d = mergeRelationshipFacts(['AI cemburu', 'ai cemburu'], []);
+  assert.deepEqual(d, ['AI cemburu']);
+
+  // Spaced-colon drift collapses too.
+  const e = mergeRelationshipFacts(['[STATUS] : teman'], ['status: pacaran']);
+  assert.deepEqual(e, ['[STATUS]: pacaran']);
+}
+
+
 // ── 4. mergeDynamicMemory dedup for non-relationship categories ──
 {
   const existing = normalizeDynamicMemory({
