@@ -6,9 +6,14 @@
   "description": "Static frontend assets (vanilla JS, ES modules)",
   "scripts": {
     "build:css": "tailwindcss -i ./public/css/tailwind.input.css -o ./public/css/tailwind.output.css --minify",
-    "watch:css": "tailwindcss -i ./public/css/tailwind.input.css -o ./public/css/tailwind.output.css --watch"
+    "watch:css": "tailwindcss -i ./public/css/tailwind.input.css -o ./public/css/tailwind.output.css --watch",
+    "build:vendor": "esbuild --bundle --format=esm --target=es2020 --outfile=./public/js/vendor/markdown-it.bundle.js ../node_modules/markdown-it/index.mjs"
   },
   "devDependencies": {
+    "esbuild": "^0.28.1",
     "tailwindcss": "^3.4.13"
+  },
+  "dependencies": {
+    "markdown-it": "^14.3.0"
   }
 }

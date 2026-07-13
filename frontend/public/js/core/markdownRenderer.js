@@ -1,4 +1,9 @@
-import MarkdownIt from 'https://cdn.jsdelivr.net/npm/markdown-it@14.1.0/+esm';
+// Vendored markdown-it (esbuild bundle of markdown-it@14 + deps) served
+// same-origin from /js/vendor so the service worker can cache it and the
+// story page renders offline (TEMUAN-034). Rebuild with:
+//   npx esbuild --bundle --format=esm --outfile=public/js/vendor/markdown-it.bundle.js \
+//     --target=es2020 node_modules/markdown-it/index.mjs
+import MarkdownIt from '../vendor/markdown-it.bundle.js';
 
 const md = new MarkdownIt({
   html: false,

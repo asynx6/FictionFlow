@@ -7,11 +7,12 @@
 //   the network, so playback is instant on second click.
 // - Other API calls: network-only (data fresh, SSE stream must not cache).
 //
-// Versi: v4 — bump CACHE_VERSION jika ada breaking change supaya old cache di-purge.
+// Versi: v5 — bump CACHE_VERSION jika ada breaking change supaya old cache di-purge.
 // v4: /api/* GET excluded from SWR (BUG-02 fix); old v3 cache held stale API
 // responses and must be purged.
+// v5: vendored markdown-it bundle added to APP_SHELL (TEMUAN-034).
 
-const CACHE_VERSION = 'fictionflow-v4';
+const CACHE_VERSION = 'fictionflow-v5';
 
 // Generic sha256 hex digest of a UTF-8 string. Runs off the main thread via
 // subtle.digest; passed through to fetch handler via a Promise.
@@ -37,6 +38,7 @@ const APP_SHELL = [
   '/js/core/themeManager.js',
   '/js/core/eventBus.js',
   '/js/core/markdownRenderer.js',
+  '/js/vendor/markdown-it.bundle.js',
   '/js/api/apiClient.js',
   '/manifest.webmanifest',
   '/icon.png',
