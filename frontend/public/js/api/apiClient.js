@@ -122,6 +122,60 @@ export const apiClient = {
 
   listMessages: (id, { limit = 50, offset = 0 } = {}) =>
     request(`/stories/${id}/messages?limit=${limit}&offset=${offset}`),
+
+  /**
+   * Incremental chat-load paginator used by the story page. Returns an async
+   * iterable that yields message batches newest-first.
+   *
+   *   Phase 1 (window): GET `/messages?limit=initialWindow`. The server
+   *      returns up to `initialWindow` newest messages; we drain them in one
+   *      request. Once the server reports a short window
+   *      (batch.length < initialWindow), we pivot.
+   *   Phase 2 (history): GET `/messages?limit=pageSize&offset=initialWindow`.
+   *      Iteration: offset advances by batch.length each page. Pagination
+   *      terminates as soon as the server returns a short remainder
+   *      (batch.length < pageSize).
+   *
+   * `signal` propagates to fetch for abort.
+   * `listMessages` keeps its old `(limit, offset)` signature so any older
+   * caller still gets a single-page tail-style fetch.
+   *
+   * ponytail: routing/timing logic; upgrade when tasks B/D bring
+   * back-pressure (e.g. scroll-position-driven prefetch).
+   *
+   * @param {string} id
+   * @param {{initialWindow?: number, pageSize?: number, signal?: AbortSignal}} [opts]
+   * @returns {AsyncGenerator<Message[]>}
+   */
+  loadAllMessages: async function* (id, {
+    initialWindow = 12,
+    pageSize = 24,
+    signal,
+  } = {}) {
+    let offset = 0;
+    let phase = 'window'; // 'window' -> 'history'
+    while (true) {
+      const limit = phase === 'window' ? initialWindow : pageSize;
+      const path = offset === 0
+        ? `/stories/${id}/messages?limit=${limit}`
+        : `/stories/${id}/messages?limit=${limit}&offset=${offset}`;
+      const body = await request(path, { signal });
+      const batch = Array.isArray(body?.data?.messages) ? body.data.messages : [];
+      yield batch;
+      if (phase === 'window') {
+        // Single-shot window fetch: regardless of fill, pivot to history
+        // paging immediately. offset jumps to initialWindow so server's
+        // deterministic newest-first ordering is preserved.
+        if (batch.length === 0) return; // empty story — nothing to paginate
+        phase = 'history';
+        offset = initialWindow;
+      } else {
+        // History phase: short remainder terminates cleanly.
+        if (batch.length < pageSize) return;
+        offset += batch.length;
+      }
+    }
+  },
   sendMessage: (id, payload, { onEvent, signal } = {}) =>
     new Promise((resolve, reject) => {
       fetch(`${BASE}/stories/${id}/messages`, {

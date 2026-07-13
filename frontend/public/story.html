@@ -231,6 +231,11 @@
 
   <!-- Chat History -->
   <main class="flex-1 overflow-y-auto p-3 sm:p-6 scroll-smooth scrollbar-thin scrollbar-thumb-theme-hover scrollbar-track-transparent relative bg-theme-bg" id="chatContainer">
+    <!-- Top progress bar: visible while older history pagination is in flight.
+         Initially hidden — toggled via .is-loading class (lazy pagination
+         adds it during background page drains). pointer-events:none keeps
+         it from intercepting clicks on the chat below. -->
+    <div id="chatProgressBar" class="chat-progress-bar" aria-hidden="true"></div>
     <div class="max-w-3xl mx-auto space-y-4 sm:space-y-6 pb-40" id="chatList">
       <div class="flex justify-center py-10" id="loadingChat">
         <span class="material-icons-round animate-spin text-theme-accent text-3xl">autorenew</span>
@@ -284,7 +289,7 @@
     </div>
   </footer>
 
-  <script type="module" src="/js/pages/story.page.js?v=35"></script>
+  <script type="module" src="/js/pages/story.page.js?v=36"></script>
   <script>
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => {

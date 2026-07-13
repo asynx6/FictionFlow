@@ -1123,3 +1123,47 @@
   }
 }
 
+/* ============================================================================
+   Chat top progress bar (incremental-load pagination)
+   ----------------------------------------------------------------------------
+   Sticky to the top of #chatContainer. Hidden by default; .is-loading
+   toggles opacity + a shimmer animation. pointer-events:none ensures it
+   doesn't intercept chat taps. Sits below the reading-progress (z=60)
+   but above bubbles (default static stacking).
+   ============================================================================ */
+
+.chat-progress-bar {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  height: 2px;
+  background: linear-gradient(
+    90deg,
+    rgba(var(--theme-accent), 0) 0%,
+    rgb(var(--theme-accent)) 50%,
+    rgba(var(--theme-accent), 0) 100%
+  );
+  background-size: 200% 100%;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+  pointer-events: none;
+}
+
+.chat-progress-bar.is-loading {
+  opacity: 1;
+  animation: chat-progress-shimmer 1.4s linear infinite;
+}
+
+@keyframes chat-progress-shimmer {
+  0%   { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chat-progress-bar.is-loading {
+    animation: none !important;
+    opacity: 1;
+    background-position: 50% 0;
+  }
+}
+
