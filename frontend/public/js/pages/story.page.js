@@ -880,7 +880,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                <button class="tts-play-btn p-1 rounded-full text-theme-muted hover:text-theme-text hover:bg-theme-hover transition-colors opacity-0 group-hover:opacity-100 focus:opacity-100"
                        data-msg-id="${msg.id}"
                        data-text="${encodeURIComponent(messageContent)}"
-                       title="Dengarkan (${resolveTtsVoiceLabel(currentStory)})">
+                       title="Dengarkan (${resolveTtsVoice(currentStory)})">
                  <span class="material-icons-round text-[16px]">volume_up</span>
                </button>
              </div>
