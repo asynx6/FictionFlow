@@ -221,6 +221,11 @@ document.addEventListener('error', (e) => {
  */
 const _ttsAudio = new Audio();
 let _activeTtsBtn = null;
+// AbortController for the in-flight play-click TTS fetch. Tracked module-scope
+// so a stop / play-on-another-bubble can abort it (otherwise a hung Edge TTS
+// endpoint leaves the bubble stuck 'loading' forever — TEMUAN-028).
+let _inflightTtsController = null;
+const TTS_PLAY_TIMEOUT_MS = 12000;
 
 // Module-scope cache: msgId -> {blob, url}. Reusing a cached blob short-
 // circuits the second play to instant (Audio does not refetch). We keep
@@ -360,7 +365,11 @@ function _playBlobAsAudio(blob, group, msgId) {
   };
   _setTtsBtnState(group, 'playing');
   _ttsAudio.play().catch((err) => {
-    showTransientError(`Audio gagal dimuat: ${err?.message || err}`);
+    // AbortError fires when play() is interrupted by a pause()/src-swap (e.g.
+    // user clicked stop or another bubble) — that's self-induced, not a real
+    // playback failure. Don't show a false-positive toast (trace TTS-013).
+    if (err?.name === 'AbortError') return;
+    showTransientError(`Audio gagal dimutar: ${err?.message || err}`);
     _resetAllTtsBtns();
   });
 }
@@ -449,16 +458,47 @@ async function _onTtsPlayOrToggleClick(group) {
   const voice = resolveTtsVoice(story);
 
   _setTtsBtnState(group, 'loading');
+
+  // Abort any previous in-flight play fetch (e.g. user clicked another bubble
+  // while the first was still loading) before starting a new one.
+  if (_inflightTtsController) {
+    try { _inflightTtsController.abort(); } catch {}
+    _inflightTtsController = null;
+  }
+  const controller = new AbortController();
+  _inflightTtsController = controller;
+  const timer = setTimeout(() => {
+    try { controller.abort(); } catch {}
+  }, TTS_PLAY_TIMEOUT_MS);
+
   try {
-    const blob = await apiClient.synthesizeTts({ text, voice });
+    const blob = await apiClient.synthesizeTts({ text, voice, signal: controller.signal });
+    clearTimeout(timer);
+    if (_inflightTtsController === controller) _inflightTtsController = null;
     _playBlobAsAudio(blob, group, msgId);
   } catch (err) {
+    clearTimeout(timer);
+    if (_inflightTtsController === controller) _inflightTtsController = null;
+    // AbortError = user-induced (stop / play elsewhere / timeout). Don't show
+    // a false-positive 'Audio gagal dimuat' toast for those (trace TTS-013).
+    const aborted = controller.signal.aborted || err?.name === 'AbortError';
     _resetAllTtsBtns();
-    showTransientError(`Audio gagal dimuat: ${err?.message || err}`);
+    if (aborted && controller.signal.aborted) {
+      // Timed out (not user-aborted via stop) — surface a recovery hint.
+      showTransientError('Audio gagal dimuat: timeout. Coba play lagi.');
+    } else if (!aborted) {
+      showTransientError(`Audio gagal dimuat: ${err?.message || err}`);
+    }
   }
 }
 
 function _onTtsStopClick(group) {
+  // Abort any in-flight play fetch so a stop during 'loading' cancels the
+  // Edge TTS request, not just resets the button visual.
+  if (_inflightTtsController) {
+    try { _inflightTtsController.abort(); } catch {}
+    _inflightTtsController = null;
+  }
   // Stop on the active bubble — pause audio + reset currentTime, group
   // reverts to idle (single play button).
   if (group === _activeTtsBtn) {
