@@ -21,6 +21,7 @@ import {
   normalizeDynamicMemory,
   mergeRelationshipFacts,
   mergeDynamicMemory,
+  __testing__,
 } from '../backend/src/services/memoryExtractor.service.js';
 import {
   parseRelationshipState,
@@ -28,6 +29,8 @@ import {
   renderSystemPrompt,
   renderCasualSystemPrompt,
 } from '../backend/src/services/promptBuilder.service.js';
+
+const { capMemory } = __testing__;
 
 // ── 1. Legacy schema normalization ──
 // Known tagged keys (here `status`) emit canonical `[KEY]: value` so legacy
@@ -251,6 +254,36 @@ import {
   };
   const prompt = renderCasualSystemPrompt(story);
   assert.match(prompt, /## KONTEKS SAAT INI/);
+}
+
+// ── 8. capMemory direction — keep tagged, trim oldest narrative (TASK-004) ──
+{
+  const TAGGED = ['[STATUS]: pacaran', '[AI_PANGGILAN]: sayang', '[USER_PANGGILAN]: sayang', '[SEJAK]: tadi', '[KONTEKS_PERILAKU]: tsundere'];
+  const narrative = (n) => Array.from({ length: n }, (_, i) => `narrative fact #${i}`);
+
+  // 5 tagged + 65 narrative → cap to 60: ALL 5 tagged survive, 55 newest narrative.
+  const mem1 = { user: [], ai: [], world: narrative(65), relationship: TAGGED };
+  const out1 = capMemory(mem1);
+  const total1 = out1.user.length + out1.ai.length + out1.world.length + out1.relationship.length;
+  assert.equal(total1, 60, 'cap enforced at 60');
+  for (const t of TAGGED) assert.ok(out1.relationship.includes(t), `tagged survived: ${t}`);
+  // oldest 10 narrative dropped (indices 0-9), newest 55 kept (indices 10-64).
+  assert.ok(out1.world.includes('narrative fact #10'), 'oldest kept starts at #10');
+  assert.ok(!out1.world.includes('narrative fact #9'), 'oldest #9 dropped');
+  assert.ok(out1.world.includes('narrative fact #64'), 'newest #64 kept');
+
+  // 60 narrative + 0 tagged → 60 narrative (no-op, under cap boundary).
+  const mem2 = { user: [], ai: [], world: narrative(60), relationship: [] };
+  const out2 = capMemory(mem2);
+  const total2 = out2.user.length + out2.ai.length + out2.world.length + out2.relationship.length;
+  assert.equal(total2, 60, 'at-cap is no-op');
+
+  // 5 tagged + 5 narrative → 10 (no-op, under cap).
+  const mem3 = { user: [], ai: [], world: narrative(5), relationship: TAGGED };
+  const out3 = capMemory(mem3);
+  const total3 = out3.user.length + out3.ai.length + out3.world.length + out3.relationship.length;
+  assert.equal(total3, 10, 'under-cap no-op');
+  for (const t of TAGGED) assert.ok(out3.relationship.includes(t));
 }
 
 console.log('OK — memory state-facts self-check passed');

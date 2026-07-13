@@ -179,27 +179,33 @@ export function mergeDynamicMemory(existing, incoming) {
 }
 
 /**
- * If total fact count exceeds the cap, trim from oldest first. Keep tagged
- * relationship facts last (they are the highest-value state, never trim
- * unless absolutely necessary).
+ * If total fact count exceeds the cap, trim oldest narrative facts first and
+ * ALWAYS keep every tagged relationship state fact (they are the highest-value
+ * current state — STATUS / AI_PANGGILAN / USER_PANGGILAN / SEJAK /
+ * KONTEKS_PERILAKU). Previously the sort+slice direction dropped tagged facts
+ * FIRST when >60 facts accumulated (BUG-05 data-loss).
+ *
+ * `flat` preserves per-category insertion order (oldest→newest as stored), so
+ * trimming narrative from the front drops the oldest entries.
  */
 function capMemory(memory) {
-  const flat = [];
+  const tagged = [];
+  const narrative = [];
   for (const cat of VALID_CATEGORIES) {
-    for (const f of memory[cat]) flat.push({ cat, f });
+    for (const f of memory[cat]) {
+      const item = { cat, f };
+      if (cat === 'relationship' && isTaggedFact(f)) tagged.push(item);
+      else narrative.push(item);
+    }
   }
-  if (flat.length <= MAX_DYNAMIC_FACTS_TOTAL) return memory;
+  if (tagged.length + narrative.length <= MAX_DYNAMIC_FACTS_TOTAL) return memory;
 
-  // Sort: tagged relationship state first (preserve), narrative last (trim).
-  flat.sort((a, b) => {
-    const aIsTagged = a.cat === 'relationship' && isTaggedFact(a.f) ? 0 : 1;
-    const bIsTagged = b.cat === 'relationship' && isTaggedFact(b.f) ? 0 : 1;
-    return aIsTagged - bIsTagged;
-  });
-
-  const trimmed = flat.slice(-MAX_DYNAMIC_FACTS_TOTAL);
+  // Keep ALL tagged state (never trim); fill the remaining budget with the
+  // NEWEST narrative (drop oldest narrative from the front).
+  const narrativeBudget = Math.max(0, MAX_DYNAMIC_FACTS_TOTAL - tagged.length);
+  const keptNarrative = narrative.slice(-narrativeBudget);
   const out = { user: [], ai: [], world: [], relationship: [] };
-  for (const item of trimmed) out[item.cat].push(item.f);
+  for (const item of [...tagged, ...keptNarrative]) out[item.cat].push(item.f);
   return out;
 }
 
