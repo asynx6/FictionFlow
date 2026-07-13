@@ -55,3 +55,6 @@ skills/
 
 # --- Scratch / experiment files ---
 scratch/
+# --- Audit / agent scratch (not part of codebase) ---
+.superpowers/
+scratch/
