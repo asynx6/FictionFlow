@@ -105,18 +105,23 @@ const VALID_TTS_VOICES = new Set([
 ]);
 
 /**
+ * TTS playback uses one voice per story. Backend /api/tts synthesises the
+ * full bubble text in a single Edge TTS call — no per-segment parsing, no
+ * gender switching. The voice comes from currentStory.tts_voice if it lives
+ * in the allowlist, else falls back to DEFAULT_TTS_VOICE (Indonesian male).
+ * The button title in the bubble shows "Dengarkan (id-ID-ArdiNeural)" etc.
+ */
+function resolveTtsVoice(story) {
+  const v = (story?.tts_voice ?? '').toString().trim();
+  if (VALID_TTS_VOICES.has(v)) return v;
+  return DEFAULT_TTS_VOICE;
+}
+
+/**
  * Module-level cache untuk currentStory. Di-update dari loadStoryAndMessages
- * setiap kali story fetched. speakMessage() function (dideklarasikan di top-
- * level module) membaca dari cache ini — tidak bisa langsung akses variable
- * `currentStory` karena variable itu scoped ke DOMContentLoaded callback.
+ * setiap kali story fetched. TTS playback reads from this cache.
  */
 let __currentStoryCache = null;
-
-// TTS was removed. speakMessage / speakLastAiMessage no longer exist —
-// the play/pause/resume/stop toolbar was removed from the bubble
-// template, and the related wiring (currentUtterance, ttsEngine,
-// ttsQueue, Events.TTS_*, EventBus emits) were stripped earlier in
-// this commit series.
 
 // Delegated error handler untuk avatar images — gantikan dengan initial fallback.
 // Img tag diberi class js-avatar-img + data-initial oleh renderer template.
@@ -129,6 +134,98 @@ document.addEventListener('error', (e) => {
   span.textContent = initial;
   img.replaceWith(span);
 }, true); // capturing phase — error events don't bubble.
+
+/**
+ * 1-voice TTS playback. Click a `.tts-play-btn` in any AI bubble: fetch
+ * /api/tts with the story's single voice, get back an MP3 blob, play via a
+ * single <audio> element. Only one playback at a time — clicking a new
+ * bubble while one is playing stops the previous.
+ *
+ * No gender switching, no multi-segment parser. The whole bubble text is one
+ * Edge TTS call.
+ */
+const _ttsAudio = new Audio();
+let _activeTtsBtn = null;
+
+function _resetTtsBtn() {
+  if (_activeTtsBtn) {
+    _activeTtsBtn.classList.remove('is-tts-active');
+    const icon = _activeTtsBtn.querySelector('.material-icons-round');
+    if (icon) icon.textContent = 'volume_up';
+    _activeTtsBtn = null;
+  }
+}
+
+function _playBlobAsAudio(blob, btn) {
+  // Stop anything currently playing.
+  try {
+    _ttsAudio.pause();
+  } catch {}
+  const url = URL.createObjectURL(blob);
+  _ttsAudio.src = url;
+  _ttsAudio.onended = () => {
+    URL.revokeObjectURL(url);
+    _resetTtsBtn();
+  };
+  _ttsAudio.onerror = () => {
+    URL.revokeObjectURL(url);
+    _resetTtsBtn();
+  };
+  _resetTtsBtn();
+  _activeTtsBtn = btn;
+  btn.classList.add('is-tts-active');
+  const icon = btn.querySelector('.material-icons-round');
+  if (icon) icon.textContent = 'stop';
+  _ttsAudio.play().catch((err) => {
+    URL.revokeObjectURL(url);
+    _resetTtsBtn();
+    showTransientError(`Audio gagal dimuat: ${err?.message || err}`);
+  });
+}
+
+async function _onTtsPlayBtnClick(btn) {
+  const text = (decodeURIComponent(btn.getAttribute('data-text') || '') || '').trim();
+  if (!text) {
+    showTransientError('Tidak ada teks untuk disuarakan.');
+    return;
+  }
+  const story = __currentStoryCache;
+  if (!story) {
+    showTransientError('Story belum dimuat.');
+    return;
+  }
+  const voice = resolveTtsVoice(story);
+  // Toggle: if same bubble is currently playing, stop.
+  if (_activeTtsBtn === btn) {
+    try { _ttsAudio.pause(); } catch {}
+    _resetTtsBtn();
+    return;
+  }
+  // Disable the button while fetch is in flight.
+  btn.disabled = true;
+  try {
+    const blob = await apiClient.synthesizeTts({ text, voice });
+    _playBlobAsAudio(blob, btn);
+  } catch (err) {
+    showTransientError(`Audio gagal dimuat: ${err?.message || err}`);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+document.addEventListener('click', (e) => {
+  const btn = e.target.closest && e.target.closest('.tts-play-btn');
+  if (!btn) return;
+  e.stopPropagation();
+  void _onTtsPlayBtnClick(btn);
+});
+
+// Stop any TTS that is still playing when the page is hidden so the
+// browser doesn't keep a phantom Audio() alive across navigation.
+window.addEventListener('pagehide', () => {
+  try { _ttsAudio.pause(); URL.revokeObjectURL(_ttsAudio.src); } catch {}
+  _resetTtsBtn();
+});
 
 document.addEventListener('DOMContentLoaded', async () => {
   themeManager.init();
@@ -780,15 +877,16 @@ document.addEventListener('DOMContentLoaded', async () => {
              </div>
              <div class="flex items-center gap-2 mt-1.5 pl-1">
                <span class="text-[10px] text-theme-muted opacity-0 group-hover:opacity-100 transition-opacity">${timeLabel}</span>
+               <button class="tts-play-btn p-1 rounded-full text-theme-muted hover:text-theme-text hover:bg-theme-hover transition-colors opacity-0 group-hover:opacity-100 focus:opacity-100"
+                       data-msg-id="${msg.id}"
+                       data-text="${encodeURIComponent(messageContent)}"
+                       title="Dengarkan (${resolveTtsVoiceLabel(currentStory)})">
+                 <span class="material-icons-round text-[16px]">volume_up</span>
+               </button>
              </div>
           </div>
         </div>
       `;
-      // TTS toolbar was removed — this delegate handler is intentionally
-      // absent. The bubble template no longer renders a `.tts-toolbar`,
-      // so the API is reachable only via DOM elements that don't exist
-      // here. (If a future commit re-introduces TTS playback, attach a
-      // similar delegated handler on the new toolbar root.)
     }
     return div;
   };
