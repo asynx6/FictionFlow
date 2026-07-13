@@ -125,6 +125,74 @@ export async function* streamChatCompletion({ messages, signal }) {
   );
 }
 
+// Timeout for the FIRST byte of a streaming response. If a model is
+// rate-limited or stuck in reasoning, it can hold the connection open
+// for tens of seconds with no `data: {...}` payload. After this many ms
+// with no token, abort the request so the chain continues to the next
+// slot. Tuned conservatively; user-visible typing latency is the
+// dominant UX cost here, not savings from one or two retries.
+//
+// Configure via env if a slow provider needs more breathing room.
+const FIRST_BYTE_TIMEOUT_MS = (() => {
+  const v = Number.parseInt((process.env.MODEL_FIRST_BYTE_TIMEOUT_MS ?? '').toString(), 10);
+  return Number.isFinite(v) && v >= 1000 ? v : 25_000;
+})();
+
+async function _fetchWithFirstByteTimeout(url, init, timeoutMs) {
+  // AbortController scoped to this request — separate from caller `signal`
+  // so we can time-out without cancelling the caller's outer abort.
+  const ctl = new AbortController();
+  const callerSignal = init.signal;
+  if (callerSignal) {
+    if (callerSignal.aborted) ctl.abort();
+    callerSignal.addEventListener('abort', () => ctl.abort(), { once: true });
+  }
+  const timer = setTimeout(() => ctl.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, { ...init, signal: ctl.signal });
+    if (!res.ok || !res.body) return res;
+    // Race the first read against the timeout. If first chunk arrives
+    // within budget, cancel the timeout and return res; if not, throw
+    // a timeout error and let the chain fall through.
+    const reader = res.body.getReader();
+    const firstRead = await Promise.race([
+      reader.read(),
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error(`first-byte timeout after ${timeoutMs}ms`)), timeoutMs + 100)
+      ),
+    ]);
+    clearTimeout(timer);
+    if (firstRead.done) {
+      try { reader.releaseLock(); } catch {}
+      throw new Error('Provider returned empty stream');
+    }
+    // Reconstruct a ReadableStream that yields our buffered first chunk
+    // then forwards subsequent reads.
+    const wrapped = new ReadableStream({
+      async pull(controller) {
+        if (firstRead.value !== undefined) {
+          controller.enqueue(firstRead.value);
+        }
+        while (true) {
+          const r = await reader.read();
+          if (r.done) { controller.close(); return; }
+          controller.enqueue(r.value);
+        }
+      },
+      cancel(reason) {
+        try { reader.cancel(reason); } catch {}
+      },
+    });
+    return new Response(wrapped, {
+      status: res.status,
+      statusText: res.statusText,
+      headers: res.headers,
+    });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function* streamSingleModel({ modelValue, body, signal }) {
   void modelValue;
   const MAX_RETRIES = 1;
@@ -132,15 +200,30 @@ async function* streamSingleModel({ modelValue, body, signal }) {
   let lastError;
 
   while (attempt <= MAX_RETRIES) {
-    const res = await fetch(`${env.MODEL_PROVIDER_BASE_URL}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${env.MODEL_PROVIDER_API_KEY}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(body),
-      signal,
-    });
+    let res;
+    try {
+      res = await _fetchWithFirstByteTimeout(
+        `${env.MODEL_PROVIDER_BASE_URL}/chat/completions`,
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${env.MODEL_PROVIDER_API_KEY}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(body),
+          signal,
+        },
+        FIRST_BYTE_TIMEOUT_MS
+      );
+    } catch (err) {
+      const isTimeout = /timeout|abort/i.test(err.message);
+      lastError = new Error(
+        `Provider error (${body.model}): ${isTimeout ? `hang/timeout > ${FIRST_BYTE_TIMEOUT_MS}ms` : err.message}`
+      );
+      attempt += 1;
+      if (attempt > MAX_RETRIES) throw lastError;
+      continue;
+    }
 
     if (!res.ok || !res.body) {
       const errText = await res.text().catch(() => '');
