@@ -262,20 +262,23 @@ document.addEventListener('error', (e) => {
 }, true); // capturing phase — error events don't bubble.
 
 /**
- * 1-voice TTS playback. Click a `.tts-play-btn` in any AI bubble: fetch
- * /api/tts with the story's single voice, get back an MP3 blob, play via
- * a shared <audio> element. State machine per button:
+ * 1-voice TTS playback. Click a `.tts-play-btn` inside a `.tts-action-group`
+ * attached to any AI bubble. The wrapper carries 3 buttons (play / loading /
+ * toggle / stop) and a fourth data-role nav, controlled via
+ * `data-state` on the wrapper:
  *
- *      idle        -> "volume_up"  -> "Dengarkan (id-ID-ArdiNeural)"
- *      loading     -> "hourglass_top" spin -> "Memuat audio…"
- *      playing     -> "stop"          -> "Hentikan"
- *      paused      -> "play_arrow"    -> "Lanjutkan"
- *      error toast -> (none)          -> "Audio gagal dimuat: …"
+ *      idle    → 1 button  → play     (volume_up)         "Dengarkan"
+ *      loading → 1 button  → loading  (hourglass_top)     "Memuat audio…"
+ *      playing → 2 buttons → toggle   (pause)   + stop    "Jeda" / "Hentikan"
+ *      paused  → 2 buttons → toggle   (play_arrow) + stop "Lanjutkan" / "Hentikan"
+ *
+ * The toggle icon swaps in place between `pause` and `play_arrow`; we do NOT
+ * render two separate buttons for pause vs resume.
  *
  * Only one bubble plays at a time. Clicking another bubble stops the
- * previous one. Clicking the same bubble mid-play toggles pause/resume.
- * No gender switching, no segment parser — the whole bubble text is one
- * Edge TTS call (1 voice per story).
+ * previous one. Clicking toggle on the active bubble toggles pause/resume at
+ * the current `currentTime`. Clicking stop resets: audio paused, `currentTime
+ * = 0`, group returns to idle single-button state.
  */
 const _ttsAudio = new Audio();
 let _activeTtsBtn = null;
@@ -332,25 +335,38 @@ function showTransientError(text) {
   }, 4000);
 }
 
-const _TTS_ICONS = {
-  idle: 'volume_up',
-  loading: 'hourglass_top',
-  playing: 'stop',
+// Icons + titles per state — only the toggle role swaps between `pause` and
+// `play_arrow` depending on state. The play / loading / stop roles stay
+// fixed (CSS drives their visibility based on the wrapper's `data-state`).
+const _TTS_TOGGLE_ICONS = {
+  playing: 'pause',
   paused: 'play_arrow',
 };
-const _TTS_TITLES = {
-  idle: 'Dengarkan',
-  loading: 'Memuat audio…',
-  playing: 'Hentikan',
+const _TTS_TOGGLE_TITLES = {
+  playing: 'Jeda',
   paused: 'Lanjutkan',
 };
 
-function _setTtsBtnState(btn, state) {
-  if (!btn) return;
-  btn.setAttribute('data-state', state);
-  const icon = btn.querySelector('.material-icons-round');
-  if (icon) icon.textContent = _TTS_ICONS[state] || _TTS_ICONS.idle;
-  btn.setAttribute('title', _TTS_TITLES[state] || _TTS_TITLES.idle);
+function _setTtsBtnState(btnOrGroup, state) {
+  if (!btnOrGroup) return;
+  // Accept either the wrapper (.tts-action-group) or a legacy button ref —
+  // resolve to the wrapper so CSS visibility rules apply.
+  const group = btnOrGroup.classList?.contains('tts-action-group')
+    ? btnOrGroup
+    : btnOrGroup.closest?.('.tts-action-group') ?? btnOrGroup;
+  if (!group) return;
+  group.setAttribute('data-state', state);
+  // Toggle icon + title swap (the only role whose icon depends on state).
+  const toggleBtn = group.querySelector?.('.tts-role-toggle');
+  if (toggleBtn) {
+    const toggleIcon = toggleBtn.querySelector('.material-icons-round');
+    if (toggleIcon && _TTS_TOGGLE_ICONS[state]) {
+      toggleIcon.textContent = _TTS_TOGGLE_ICONS[state];
+    }
+    if (_TTS_TOGGLE_TITLES[state]) {
+      toggleBtn.setAttribute('title', _TTS_TOGGLE_TITLES[state]);
+    }
+  }
 }
 
 function _refreshActiveButton() {
@@ -364,8 +380,8 @@ function _refreshActiveButton() {
 }
 
 function _resetAllTtsBtns() {
-  document.querySelectorAll('.tts-play-btn').forEach((btn) => {
-    _setTtsBtnState(btn, 'idle');
+  document.querySelectorAll('.tts-action-group').forEach((group) => {
+    _setTtsBtnState(group, 'idle');
   });
   _activeTtsBtn = null;
 }
@@ -375,7 +391,7 @@ function _newBlobUrl(blob) {
   return url;
 }
 
-function _playBlobAsAudio(blob, btn, msgId) {
+function _playBlobAsAudio(blob, group, msgId) {
   // Stop anything currently playing.
   try { _ttsAudio.pause(); } catch {}
   if (_ttsAudio.src && _ttsAudio.src.startsWith('blob:')) {
@@ -394,7 +410,7 @@ function _playBlobAsAudio(blob, btn, msgId) {
     _evictOldTtsCacheEntries();
   }
   _ttsAudio.src = url;
-  _activeTtsBtn = btn;
+  _activeTtsBtn = group;
 
   _ttsAudio.onended = () => {
     _resetAllTtsBtns();
@@ -403,22 +419,22 @@ function _playBlobAsAudio(blob, btn, msgId) {
     showTransientError('Audio gagal diputar.');
     _resetAllTtsBtns();
   };
-  _setTtsBtnState(btn, 'playing');
+  _setTtsBtnState(group, 'playing');
   _ttsAudio.play().catch((err) => {
     showTransientError(`Audio gagal dimuat: ${err?.message || err}`);
     _resetAllTtsBtns();
   });
 }
 
-async function _onTtsPlayBtnClick(btn) {
-  const state = btn.getAttribute('data-state') || 'idle';
-  const msgId = btn.getAttribute('data-msg-id') || '';
+async function _onTtsPlayOrToggleClick(group) {
+  const state = group.getAttribute('data-state') || 'idle';
+  const msgId = group.getAttribute('data-msg-id') || '';
 
-  // Pause / resume click while this bubble is the active one.
-  if (btn === _activeTtsBtn) {
+  // Pause / resume toggle while this bubble is the active one.
+  if (group === _activeTtsBtn) {
     if (state === 'playing') {
       try { _ttsAudio.pause(); } catch {}
-      _setTtsBtnState(btn, 'paused');
+      _setTtsBtnState(group, 'paused');
       return;
     }
     if (state === 'paused') {
@@ -431,7 +447,7 @@ async function _onTtsPlayBtnClick(btn) {
   }
 
   // Switch bubble while another is playing — clear previous state, fetch new.
-  if (_activeTtsBtn && _activeTtsBtn !== btn) {
+  if (_activeTtsBtn && _activeTtsBtn !== group) {
     try { _ttsAudio.pause(); } catch {}
     _resetAllTtsBtns();
   }
@@ -442,7 +458,7 @@ async function _onTtsPlayBtnClick(btn) {
   if (msgId && _ttsCache.has(msgId)) {
     const entry = _ttsCache.get(msgId);
     if (entry?.blob) {
-      _setTtsBtnState(btn, 'loading');
+      _setTtsBtnState(group, 'loading');
       try { _ttsAudio.pause(); } catch {}
       if (_ttsAudio.src?.startsWith('blob:')) {
         try { URL.revokeObjectURL(_ttsAudio.src); } catch {}
@@ -454,13 +470,13 @@ async function _onTtsPlayBtnClick(btn) {
       const url = URL.createObjectURL(entry.blob);
       entry.url = url;
       _ttsAudio.src = url;
-      _activeTtsBtn = btn;
+      _activeTtsBtn = group;
       _ttsAudio.onended = () => _resetAllTtsBtns();
       _ttsAudio.onerror = () => {
         showTransientError('Audio gagal diputar.');
         _resetAllTtsBtns();
       };
-      _setTtsBtnState(btn, 'playing');
+      _setTtsBtnState(group, 'playing');
       try {
         await _ttsAudio.play();
       } catch (err) {
@@ -474,9 +490,9 @@ async function _onTtsPlayBtnClick(btn) {
   // Cache miss: read text from data-text with fallback to the bubble's
   // rendered .msg-content. Some legacy or in-flight bubbles have empty
   // data-text (e.g. AI mid-stream before backend landed `finalContent`).
-  let text = (decodeURIComponent(btn.getAttribute('data-text') || '') || '').trim();
+  let text = (decodeURIComponent(group.getAttribute('data-text') || '') || '').trim();
   if (!text) {
-    const bubble = btn.closest('.msg-ai-block');
+    const bubble = group.closest('.msg-ai-block');
     const contentEl = bubble ? bubble.querySelector('.msg-content') : null;
     if (contentEl) {
       text = (contentEl.textContent || contentEl.innerText || '').trim();
@@ -493,21 +509,45 @@ async function _onTtsPlayBtnClick(btn) {
   }
   const voice = resolveTtsVoice(story);
 
-  _setTtsBtnState(btn, 'loading');
+  _setTtsBtnState(group, 'loading');
   try {
     const blob = await apiClient.synthesizeTts({ text, voice });
-    _playBlobAsAudio(blob, btn, msgId);
+    _playBlobAsAudio(blob, group, msgId);
   } catch (err) {
     _resetAllTtsBtns();
     showTransientError(`Audio gagal dimuat: ${err?.message || err}`);
   }
 }
 
+function _onTtsStopClick(group) {
+  // Stop on the active bubble — pause audio + reset currentTime, group
+  // reverts to idle (single play button).
+  if (group === _activeTtsBtn) {
+    try { _ttsAudio.pause(); } catch {}
+    _ttsAudio.currentTime = 0;
+    _setTtsBtnState(group, 'idle');
+    _activeTtsBtn = null;
+    return;
+  }
+  // Stop on a non-active bubble — just reset its visual state. Active
+  // playback (if any) is unchanged.
+  _setTtsBtnState(group, 'idle');
+}
+
 document.addEventListener('click', (e) => {
   const btn = e.target.closest && e.target.closest('.tts-play-btn');
   if (!btn) return;
   e.stopPropagation();
-  void _onTtsPlayBtnClick(btn);
+  const role = btn.getAttribute('data-role');
+  const group = btn.closest('.tts-action-group');
+  if (!group) return;
+  if (role === 'stop') {
+    _onTtsStopClick(group);
+  } else {
+    // 'play' / 'loading' / 'toggle': all delegate to the play-or-toggle handler.
+    if (role === 'loading') return; // disabled — should not happen, just guard.
+    void _onTtsPlayOrToggleClick(group);
+  }
 });
 
 // Stop any TTS that is still playing when the page is hidden so the
@@ -1178,12 +1218,24 @@ document.addEventListener('DOMContentLoaded', async () => {
              </div>
              <div class="flex items-center gap-2 mt-1.5 pl-1">
                <span class="text-[10px] text-theme-muted opacity-0 group-hover:opacity-100 transition-opacity">${timeLabel}</span>
-               <button class="tts-play-btn p-1 rounded-full text-theme-muted hover:text-theme-text hover:bg-theme-hover transition-colors opacity-0 group-hover:opacity-100 focus:opacity-100"
-                       data-msg-id="${msg.id}"
-                       data-text="${encodeURIComponent(messageContent)}"
-                       title="Dengarkan (${resolveTtsVoice(currentStory)})">
-                 <span class="material-icons-round text-[16px]">volume_up</span>
-               </button>
+               <div class="tts-action-group"
+                    data-msg-id="${msg.id}"
+                    data-text="${encodeURIComponent(messageContent)}"
+                    data-state="idle"
+                    title="Dengarkan (${resolveTtsVoice(currentStory)})">
+                 <button class="tts-play-btn tts-role-play p-1 rounded-full text-theme-muted hover:text-theme-text hover:bg-theme-hover transition-colors" data-role="play" title="Dengarkan">
+                   <span class="material-icons-round text-[16px]">volume_up</span>
+                 </button>
+                 <button class="tts-play-btn tts-role-loading p-1 rounded-full text-theme-muted" data-role="loading" title="Memuat audio…" disabled>
+                   <span class="material-icons-round text-[16px] animate-spin">hourglass_top</span>
+                 </button>
+                 <button class="tts-play-btn tts-role-toggle p-1 rounded-full text-theme-muted hover:text-theme-text hover:bg-theme-hover transition-colors" data-role="toggle" title="Jeda">
+                   <span class="material-icons-round text-[16px]">pause</span>
+                 </button>
+                 <button class="tts-play-btn tts-role-stop p-1 rounded-full text-theme-muted hover:text-theme-text hover:bg-theme-hover transition-colors" data-role="stop" title="Hentikan">
+                   <span class="material-icons-round text-[16px]">stop</span>
+                 </button>
+               </div>
              </div>
           </div>
         </div>

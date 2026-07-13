@@ -949,18 +949,19 @@
 }
 
 /* ============================================================================
-   TTS Toolbar — state-based show/hide for 5 action buttons
+   TTS Action Group — 3-button lifecycle per AI bubble
    ----------------------------------------------------------------------------
    State machine:
-     idle    → play only
-     loading → spinner only (click disabled)
-     playing → pause + stop
-     paused  → resume + stop
+     idle    → 1 button: play (volume_up)
+     loading → 1 button: spinner (hourglass_top, click disabled)
+     playing → 2 buttons: toggle (pause) + stop
+     paused  → 2 buttons: toggle (play_arrow) + stop
 
-   Visibility: tampil saat parent bubble di-hover atau saat toolbar aktif.
+   Visibility: muncul saat parent bubble di-hover atau saat group aktif.
+   Toggle button icon swap in-place di-handle oleh JS (pause ↔ play_arrow).
    ============================================================================ */
 
-.tts-toolbar {
+.tts-action-group {
   display: inline-flex !important;
   align-items: center !important;
   gap: 0.125rem !important;
@@ -969,95 +970,82 @@
   pointer-events: none;
 }
 
-.msg-ai-block:hover .tts-toolbar,
-.tts-toolbar[data-state="loading"],
-.tts-toolbar[data-state="playing"],
-.tts-toolbar[data-state="paused"] {
+.msg-ai-block:hover .tts-action-group,
+.tts-action-group[data-state="loading"],
+.tts-action-group[data-state="playing"],
+.tts-action-group[data-state="paused"] {
   opacity: 1;
   pointer-events: auto;
 }
 
-/* Button base layout (all 5 buttons) */
-.tts-toolbar .tts-btn,
-.tts-toolbar .tts-pause-btn,
-.tts-toolbar .tts-resume-btn,
-.tts-toolbar .tts-stop-btn {
-  display: inline-flex !important;
-  align-items: center !important;
-  justify-content: center !important;
-  padding: 0.25rem !important;
-  border-radius: 9999px !important;
-  color: rgb(var(--theme-muted)) !important;
-  transition: all 0.15s ease !important;
-  background: transparent !important;
-  border: none !important;
-  cursor: pointer !important;
-  min-width: 28px !important;
-  height: 28px !important;
+/* Base layout for every child button */
+.tts-action-group > .tts-play-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.25rem;
+  border-radius: 9999px;
+  color: rgb(var(--theme-muted));
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  min-width: 28px;
+  height: 28px;
+  transition: color 0.15s ease, background-color 0.15s ease, transform 0.15s ease;
 }
 
-.tts-toolbar .tts-btn:hover:not([disabled]),
-.tts-toolbar .tts-pause-btn:hover,
-.tts-toolbar .tts-resume-btn:hover,
-.tts-toolbar .tts-stop-btn:hover {
-  background-color: rgb(var(--theme-hover)) !important;
-  color: rgb(var(--theme-accent)) !important;
+.tts-action-group > .tts-play-btn:hover:not([disabled]) {
+  background-color: rgb(var(--theme-hover));
+  color: rgb(var(--theme-accent));
   transform: scale(1.08);
 }
 
-/* --- State: idle --- */
-.tts-toolbar[data-state="idle"] [data-action="play"] {
-  display: inline-flex !important;
+.tts-action-group > .tts-play-btn:focus-visible {
+  outline: 2px solid rgb(var(--theme-accent));
+  outline-offset: 2px;
 }
 
-.tts-toolbar[data-state="idle"] [data-action="loading"],
-.tts-toolbar[data-state="idle"] [data-action="pause"],
-.tts-toolbar[data-state="idle"] [data-action="resume"],
-.tts-toolbar[data-state="idle"] [data-action="stop"] {
-  display: none !important;
-}
+/* --- State: idle — only play button visible --- */
+.tts-action-group[data-state="idle"] .tts-role-play { display: inline-flex !important; }
+.tts-action-group[data-state="idle"] .tts-role-loading,
+.tts-action-group[data-state="idle"] .tts-role-toggle,
+.tts-action-group[data-state="idle"] .tts-role-stop { display: none !important; }
 
-/* --- State: loading --- */
-.tts-toolbar[data-state="loading"] [data-action="loading"] {
+/* --- State: loading — only hourglass visible (click disabled) --- */
+.tts-action-group[data-state="loading"] .tts-role-loading {
   display: inline-flex !important;
   pointer-events: none;
   cursor: wait;
   color: rgb(var(--theme-accent)) !important;
 }
+.tts-action-group[data-state="loading"] .tts-role-play,
+.tts-action-group[data-state="loading"] .tts-role-toggle,
+.tts-action-group[data-state="loading"] .tts-role-stop { display: none !important; }
 
-.tts-toolbar[data-state="loading"] [data-action="play"],
-.tts-toolbar[data-state="loading"] [data-action="pause"],
-.tts-toolbar[data-state="loading"] [data-action="resume"],
-.tts-toolbar[data-state="loading"] [data-action="stop"] {
-  display: none !important;
+/* --- State: playing — toggle (pause) + stop visible --- */
+.tts-action-group[data-state="playing"] .tts-role-toggle,
+.tts-action-group[data-state="playing"] .tts-role-stop { display: inline-flex !important; }
+.tts-action-group[data-state="playing"] .tts-role-play,
+.tts-action-group[data-state="playing"] .tts-role-loading { display: none !important; }
+
+.tts-action-group[data-state="playing"] .tts-role-toggle {
+  color: rgb(var(--theme-accent));
+  animation: tts-pulse 1.2s ease-in-out infinite;
 }
 
-/* --- State: playing --- */
-.tts-toolbar[data-state="playing"] [data-action="pause"],
-.tts-toolbar[data-state="playing"] [data-action="stop"] {
-  display: inline-flex !important;
+/* --- State: paused — toggle (play_arrow) + stop visible --- */
+.tts-action-group[data-state="paused"] .tts-role-toggle,
+.tts-action-group[data-state="paused"] .tts-role-stop { display: inline-flex !important; }
+.tts-action-group[data-state="paused"] .tts-role-play,
+.tts-action-group[data-state="paused"] .tts-role-loading { display: none !important; }
+
+.tts-action-group[data-state="paused"] .tts-role-toggle {
+  color: rgb(var(--theme-accent));
+  opacity: 0.85;
 }
 
-.tts-toolbar[data-state="playing"] [data-action="play"],
-.tts-toolbar[data-state="playing"] [data-action="loading"],
-.tts-toolbar[data-state="playing"] [data-action="resume"] {
-  display: none !important;
-}
-
-/* --- State: paused --- */
-.tts-toolbar[data-state="paused"] [data-action="resume"],
-.tts-toolbar[data-state="paused"] [data-action="stop"] {
-  display: inline-flex !important;
-}
-
-.tts-toolbar[data-state="paused"] [data-action="play"],
-.tts-toolbar[data-state="paused"] [data-action="loading"],
-.tts-toolbar[data-state="paused"] [data-action="pause"] {
-  display: none !important;
-}
-
-/* Spinning hourglass untuk loading state */
-.tts-toolbar .animate-spin {
+/* Spinning hourglass saat loading */
+.tts-action-group .animate-spin {
   animation: spin 1s linear infinite;
 }
 
@@ -1067,58 +1055,21 @@
   }
 }
 
-/* ─────────────────────────────────────────────────────────────────
- * Single-button tts-play-btn per AI bubble (1-voice mode, no segment
- * toolbar). State machine: idle / loading / playing / paused.
- * ──────────────────────────────────────────────────────────────── */
-
-.tts-play-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  transition: color 0.18s ease, background-color 0.18s ease, opacity 0.18s ease;
+@keyframes tts-pulse {
+  0%, 100% { opacity: 0.55; }
+  50%      { opacity: 1; }
 }
 
-.tts-play-btn:focus-visible {
-  outline: 2px solid rgb(var(--theme-accent));
-  outline-offset: 2px;
-}
-
-.tts-play-btn:hover:not([disabled]):not([data-state="playing"]):not([data-state="paused"]) {
-  color: rgb(var(--theme-accent));
-}
-
-.tts-play-btn[data-state="playing"] {
-  color: rgb(var(--theme-accent));
-  animation: tts-pulse 1.2s ease-in-out infinite;
-}
-
-.tts-play-btn[data-state="loading"] .material-icons-round {
-  animation: spin 1s linear infinite;
-}
-
-.tts-play-btn[data-state="paused"] {
-  color: rgb(var(--theme-accent));
-  opacity: 0.85;
-}
-
-.tts-play-btn[disabled] {
+.tts-action-group > .tts-play-btn[disabled] {
   cursor: not-allowed;
   opacity: 0.6;
   transform: none !important;
   background-color: transparent !important;
 }
 
-@keyframes tts-pulse {
-  0%, 100% { opacity: 0.55; }
-  50%      { opacity: 1; }
-}
-
 @media (prefers-reduced-motion: reduce) {
-  .tts-play-btn[data-state="playing"],
-  .tts-toolbar .animate-spin,
-  .tts-play-btn[data-state="loading"] .material-icons-round {
+  .tts-action-group[data-state="playing"] .tts-role-toggle,
+  .tts-action-group .animate-spin {
     animation: none !important;
   }
 }
