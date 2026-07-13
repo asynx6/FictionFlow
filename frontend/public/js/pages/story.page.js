@@ -183,6 +183,57 @@ function resolveTtsVoice(story) {
 }
 
 /**
+ * Count facts across the three dynamic_memory shapes:
+ *   - legacy array [{category,key,value}]
+ *   - {facts: [...]}
+ *   - current {user,ai,world,relationship} (sum of the 4 arrays)
+ * Single source of truth used by initial-load, post-send poll, and the memory
+ * modal so the badge never desyncs (TEMUAN-029).
+ * @param {unknown} raw - string | object | array
+ * @returns {number}
+ */
+function countFacts(raw) {
+  if (!raw) return 0;
+  let parsed = raw;
+  if (typeof raw === 'string') {
+    try { parsed = JSON.parse(raw); } catch { return 0; }
+  }
+  if (Array.isArray(parsed)) return parsed.length;
+  if (parsed && typeof parsed === 'object') {
+    if (Array.isArray(parsed.facts)) return parsed.facts.length;
+    let total = 0;
+    for (const cat of ['user', 'ai', 'world', 'relationship']) {
+      const arr = parsed[cat];
+      if (Array.isArray(arr)) total += arr.length;
+    }
+    return total;
+  }
+  return 0;
+}
+
+/**
+ * Re-fetch the story from the server and refresh currentStory.dynamic_memory +
+ * the fact count badge. Called after a send completes (post-send poll) and
+ * after a rollback so the next Stop snapshot reflects the latest DB state
+ * (TEMUAN-030). Best-effort; silent on failure.
+ * @param {string} storyId
+ * @param {HTMLElement} badge
+ */
+async function refreshDynamicMemoryFromServer(storyId, badge) {
+  try {
+    const res = await apiClient.get(`/stories/${storyId}`);
+    const storyData = res.data?.story ?? res.data;
+    const rawMem = storyData?.dynamic_memory;
+    if (rawMem !== undefined && currentStory) {
+      // Update the cached story's memory in place (don't reassign the object —
+      // other closures hold the reference).
+      currentStory.dynamic_memory = rawMem;
+    }
+    if (badge) badge.textContent = `${countFacts(rawMem)} fakta`;
+  } catch { /* best-effort */ }
+}
+
+/**
  * Module-level cache untuk currentStory. Di-update dari loadStoryAndMessages
  * setiap kali story fetched. TTS playback reads from this cache.
  */
@@ -1295,22 +1346,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
       const dynamicMem = currentStory.dynamic_memory;
       if (dynamicMem) {
-        let parsed = null;
-        if (typeof dynamicMem === 'string') {
-          try { parsed = JSON.parse(dynamicMem); } catch { parsed = null; }
-        } else {
-          parsed = dynamicMem;
-        }
-        let total = 0;
-        if (Array.isArray(parsed)) {
-          total = parsed.length;
-        } else if (parsed && typeof parsed === 'object') {
-          for (const cat of ['user', 'ai', 'world', 'relationship']) {
-            const arr = parsed[cat];
-            if (Array.isArray(arr)) total += arr.length;
-          }
-        }
-        factCountBadge.textContent = `${total} fakta`;
+        factCountBadge.textContent = `${countFacts(dynamicMem)} fakta`;
       }
 
       // Voice dropdown di-populate dari currentStory.tts_voice (sumber kebenaran
@@ -1552,6 +1588,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     } catch (err) {
       console.warn('[stop] rollback gagal:', err?.message || err);
     }
+    // Re-fetch so currentStory.dynamic_memory reflects the restored state and
+    // the next Stop snapshot is fresh (TEMUAN-030).
+    void refreshDynamicMemoryFromServer(storyId, factCountBadge);
   };
 
   sendBtn.addEventListener('click', (e) => {
@@ -1673,6 +1712,10 @@ document.addEventListener('DOMContentLoaded', async () => {
         ai_message_id: aid,
         memory_snapshot: memSnap,
         content: content || null,
+      }).then(() => {
+        // Re-fetch so currentStory.dynamic_memory reflects the restored state
+        // and the next Stop snapshot is fresh (TEMUAN-030).
+        void refreshDynamicMemoryFromServer(storyId, factCountBadge);
       }).catch((err) => console.warn('[cancel] rollback gagal:', err?.message || err));
     };
 
@@ -1773,23 +1816,13 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (_factPollTimerId !== null) clearTimeout(_factPollTimerId);
       _factPollTimerId = setTimeout(async () => {
         _factPollTimerId = null;
-        try {
-          const res = await apiClient.get(`/stories/${storyId}`);
-          const storyData = res.data?.story ?? res.data;
-          const rawMem = storyData?.dynamic_memory;
-          if (rawMem) {
-            let parsed;
-            if (typeof rawMem === 'string') {
-              try { parsed = JSON.parse(rawMem); } catch { parsed = null; }
-            } else {
-              parsed = rawMem;
-            }
-            let facts = [];
-            if (Array.isArray(parsed)) facts = parsed;
-            else if (parsed && Array.isArray(parsed.facts)) facts = parsed.facts;
-            factCountBadge.textContent = `${facts.length} fakta`;
-          }
-        } catch (e) { }
+        // Re-fetch story + refresh currentStory.dynamic_memory AND the badge.
+        // Previously this only updated the badge text via a 2-shape handler
+        // (Array / {facts}) that missed the current {user,ai,world,relationship}
+        // shape → badge reset to '0 fakta' after every send (TEMUAN-029), and
+        // it never updated currentStory.dynamic_memory so the next Stop
+        // snapshot was stale (TEMUAN-030).
+        await refreshDynamicMemoryFromServer(storyId, factCountBadge);
       }, 5000);
     }
   });
