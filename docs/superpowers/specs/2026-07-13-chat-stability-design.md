@@ -40,11 +40,16 @@ session loop and partly share the same code path
 ## Goals
 
 - Chat list never visibly empties between page load and first fetch
-  complete. Skeleton placeholders match the eventual count.
+  complete. A short visible window (e.g. the most recent 12 turns)
+  renders immediately; older history fills in lazily behind the
+  chat scroll without blocking input.
 - The body of an AI bubble is always clean prose — never a stray
   JSON envelope.
-- A repeat click on the same bubble's play button is at most a few
-  hundred ms after a hard refresh.
+- Click on a bubble's play button reaches audible output at most 2
+  seconds after the click, regardless of provider or cache state.
+- The TTS button lifecycle is exactly: idle single play → loading
+  while fetching → 3-button state (pause / resume / stop) during
+  playback. No silent state changes.
 
 ## Non-goals
 
@@ -59,33 +64,41 @@ session loop and partly share the same code path
 
 Three independent components. Each verified end-to-end.
 
-### Component A — Skeleton-first chat load (`story.page.js`)
+### Component A — Incremental chat load (`story.page.js`)
 
-`loadStoryAndMessages` currently does:
-1. Read `currentStory = res.data.story`.
-2. `await apiClient.get(/messages)` then nested in ttsLatest fetch.
-3. Replace `chatList.innerHTML = ''` then render loop.
+For long chats, the previous flow load everything at once. We change
+it so the user can start reading + scrolling immediately:
 
-We refactor so the user never sees an empty list:
+1. At function entry, kick off three fetches concurrently with
+   `Promise.allSettled`:
+   - `GET /stories/{id}` (always)
+   - `GET /messages?limit=12` (initial window — most recent 12 turns)
+   - `GET /messages/tts-latest` (initial window)
+2. As soon as `messages?limit=12` resolves, render the visible window.
+   `chatList.innerHTML = ''` then loop and append. The loading
+   spinner stays at the top of `#chatContainer` until the full
+   `messages.length` total is known.
+3. After the initial render, auto-fetch the rest via
+   `GET /messages?offset=12&limit=24` in batches of 24, until the
+   server returns fewer than the limit (ggez). Each batch appends
+   older messages above the visible window — the user can scroll up
+   to see them as they appear. The append uses `insertBefore` on the
+   first child so order is preserved (oldest at top of list).
+4. While the lazy background fetch is in progress, the spinner at
+   the top of `chatList` keeps spinning but is small (16px) so the
+   chat is still usable. No skeleton rows.
 
-1. At function entry, set `chatList.innerHTML` to N=10 skeleton pairs
-   (5 user + 5 AI) — small gray pill shapes. Skeleton count is large
-   enough that real messages always have a slot to replace.
-2. Kick off three fetches concurrently with `Promise.allSettled` —
-   never one failure erases the other results.
-3. After each fetch resolves, retroactively update the skeleton
-   count to the new real count and replace skeleton placeholders with
-   real bubbles (fade-in animation 120ms ease-out).
-4. If `messages.length === 0` → fade skeletons and show centered CTA.
-5. The `loadingChat` spinner (existing `#loadingChat`) becomes a
-   progress hint at the top of `#chatContainer` (a `min-h-[2px]`
-   indeterminate top progress bar), not a centered autorenew.
+This keeps the UI responsive even on chats with hundreds of turns:
+first paint is ~150ms (just the recent 12), background fills
+independently.
 
 #### Files
 
-- `frontend/public/js/pages/story.page.js` — replace `loadStoryAndMessages`.
-- `frontend/public/story.html` — adjust `loadingChat` element to a top-bar.
-- `frontend/public/css/tailwind.input.css` — skel-pill animation keyframes.
+- `frontend/public/js/api/apiClient.js` — `listMessages` already
+  supports `limit`/`offset`. No API change. Add `loadAllMessages`
+  helper that paginates.
+- `frontend/public/js/pages/story.page.js` — replace
+  `loadStoryAndMessages` to use incremental fetch.
 
 ### Component B — Sanitize finalContent before render (`story.page.js`)
 
@@ -171,11 +184,55 @@ The 3-tier cache stack is already in place from prior commits. We add:
   logger for diagnostic.
 - `frontend/public/sw.js` — confirm `skipWaiting()` already in place.
 
+### Component D — TTS button lifecycle (3-button gate)
+
+The current button lifecycle is: idle single button → click → use
+state machine (idle / loading / playing / paused) on a single play
+button. User reported wanting a clearer 3-button flow during
+playback. So we split the button into:
+
+- **idle (no bubble playing yet)**: render one button. Tooltip
+  "Dengarkan".
+- **click → loading**: replace with a single span showing the
+  hourglass icon (spinning). Tooltip "Memuat audio…".
+- **fetch resolves → playing**: replace with **three buttons grouped
+  in a row**: pause (Paused state), resume (Paused→Playing), and
+  stop (full stop). The current single button is no longer
+  present in this state.
+- **click pause → paused**: pause icon disables, resume icon enables,
+  stop is still active. Idle state of "resume" button shows the play
+  icon.
+- **click resume → playing**: same as above but resume returns to
+  playing.
+- **click stop → idle**: stop returns immediately to single-button
+  idle state on this bubble.
+- **switch bubble mid-play**: previous bubble reverts to its idle
+  button, new bubble enters loading then 3-button.
+
+Visual layout: keep the three buttons inline (no toolbar); use
+`flex gap-1` so they sit next to each other. `data-state` attribute
+on a wrapper reflects "playing" / "paused" / "loading" so CSS can
+decorate hover / animation.
+
+#### Files
+
+- `frontend/public/js/pages/story.page.js` — replace the single
+  `tts-play-btn` template with a wrapper carrying three buttons.
+  State machine stays the same; only the DOM wiring changes from
+  single target to three targets with data-action.
+- `frontend/public/css/tailwind.input.css` — add `.tts-action-group`
+  rules for the three-button container.
+- The sanitizer (Component B) and the cache (Component C) continue
+  to apply — only the visible chrome changes.
+
 ## Verification
 
-1. **Skeleton first load:**
-   - Hard refresh. The chat list shows 10 gray skeleton pills first,
-     then real bubbles fade in within ~150ms.
+1. **Incremental load:**
+   - Inject a story with 60 messages in DB.
+   - Hard refresh. The most recent 12 messages render within ~150ms.
+     Scrolling to top while background pagination is in progress shows
+     older messages progressively. Input bar remains responsive during
+     the entire flow.
    - Refresh right after submitting a chat. All previously committed
      bubbles still appear (no vanishing).
 
@@ -183,15 +240,21 @@ The 3-tier cache stack is already in place from prior commits. We add:
    - Inject a synthetic LLM response whose body is
      `'{"full_story":"halo", "audio_segments":[…]}'` via tests
      fixture. `sanitizeFinalContent` returns `'halo'`.
-   - Inspect DB rows from prior live tests — any bubble rendered
-     with raw JSON is sanitized on next render (audit + visual).
+   - Inspect prior live rows — bubbles rendered with raw JSON are
+     sanitized on next render.
 
-3. **TTS pre-warm + SW:**
-   - Hard refresh with service worker disabled → SW unregister path
-     kicks in; user gets a 1-time "Cache audio tidak aktif" toast.
-   - With SW active, after first paint the 3 most recent messages
-     appear in `caches.open('fictionflow-tts-v3')` — verify via DevTools.
-   - Click play on any of those 3 → no loading state visible.
+3. **TTS cache hit fast:**
+   - With SW + backend cache populated, click play on a bubble.
+     Audio output starts within ~100ms. If SW is missing, click
+     within 2s target is satisfied via backend cache.
+
+4. **3-button flow:**
+   - Click idle button → loading state visible ~150-300ms.
+   - Loading resolves → 3-button group appears.
+   - Click pause → 3-button group now in paused state with resume
+     highlighted.
+   - Click resume → back to playing state.
+   - Click stop → reverts to idle single-button.
 
 ## Self-check tests
 
@@ -206,6 +269,13 @@ Add a fast-node test file `tests/test-sanitize-final-content.mjs`:
   - Null / empty / non-string inputs.
   - Malformed JSON `{"full_story":` (truncated) handled gracefully —
     partial line dropped.
+
+Add a second test file `tests/test-tts-button-lifecycle.mjs` (in-browser
+smoke via Node mock of the DOM state machine isn't strictly needed —
+the lifecycle is short, manual test suffices). Document the 3 expected
+button appearances in the README instead — single play, single
+loading, three-button group in playing state, three-button group in
+paused state, single play (post-stop).
 
 All other self-check tests must continue to pass.
 
