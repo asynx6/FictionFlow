@@ -2,6 +2,7 @@ import { Router } from 'express';
 import db from '../db/database.js';
 import { HttpError } from '../middlewares/errorHandler.js';
 import { streamChat, generateFallbackMessage } from '../controllers/messages.controller.js';
+import { normalizeDynamicMemory } from '../util/dynamicMemory.js';
 
 const router = Router({ mergeParams: true });
 
@@ -47,6 +48,9 @@ const deleteMessageTtsByMsgStmt = db.prepare(`
 `);
 const getStoryMemoryStmt = db.prepare(`
   SELECT dynamic_memory FROM stories WHERE id = ?
+`);
+const getStoryMemoryPrevStmt = db.prepare(`
+  SELECT memory_prev FROM stories WHERE id = ?
 `);
 const updateStoryMemoryStmt = db.prepare(`
   UPDATE stories SET dynamic_memory = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?
@@ -182,6 +186,30 @@ router.delete('/rollback', async (req, res, next) => {
     return next(new HttpError(400, 'user_message_id diperlukan (atau content untuk fallback lookup).'));
   }
 
+  // Resolve the memory value to restore, BEFORE the transaction so a bad
+  // client snapshot is rejected (400) without partially deleting messages.
+  // Priority: validated client snapshot → server-side memory_prev → none.
+  let restoreMemory = null;
+  if (typeof memorySnapshot === 'string' && memorySnapshot.length > 0) {
+    // Validate: must JSON.parse + normalize to the 4-category shape, else a
+    // buggy/truncated/garbage payload would silently wipe long-term memory
+    // (TEMUAN-024). Only the normalized form is persisted.
+    let parsed;
+    try { parsed = JSON.parse(memorySnapshot); } catch { parsed = null; }
+    if (!parsed || typeof parsed !== 'object') {
+      return next(new HttpError(400, 'memory_snapshot bukan JSON valid.'));
+    }
+    const normalized = normalizeDynamicMemory(parsed);
+    restoreMemory = JSON.stringify(normalized);
+  } else {
+    // No client snapshot — fall back to the server-side pre-update snapshot
+    // captured by the extractor (TEMUAN-019/030).
+    const prev = getStoryMemoryPrevStmt.pluck().get(storyId);
+    if (typeof prev === 'string' && prev.length > 0) {
+      restoreMemory = prev;
+    }
+  }
+
   const tx = db.transaction(() => {
     // Hapus AI message + TTS cache-nya kalau ada
     if (Number.isInteger(aiMessageId) && aiMessageId > 0) {
@@ -191,9 +219,10 @@ router.delete('/rollback', async (req, res, next) => {
     // Hapus user message + TTS cache-nya (TTS untuk user message jarang ada)
     deleteMessageTtsByMsgStmt.run(userMessageId);
     deleteMessageStmt.run(userMessageId, storyId);
-    // Restore memory snapshot kalau dikirim (string JSON valid)
-    if (typeof memorySnapshot === 'string' && memorySnapshot.length > 0) {
-      updateStoryMemoryStmt.run(memorySnapshot, storyId);
+    // Restore memory ke snapshot (validated client snapshot atau server-side
+    // memory_prev). Kalau keduanya tidak ada, memory dibiarkan apa adanya.
+    if (restoreMemory) {
+      updateStoryMemoryStmt.run(restoreMemory, storyId);
     }
   });
   tx();

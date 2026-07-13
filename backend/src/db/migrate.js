@@ -93,6 +93,22 @@ const MIGRATIONS = [
       }
     },
   },
+  {
+    version: 7,
+    description: 'Add memory_prev column (server-side pre-update snapshot for rollback)',
+    up: (db) => {
+      const hasColumn = (table, column) => {
+        const cols = db.prepare(`PRAGMA table_info(${table})`).all();
+        return cols.some((c) => c.name === column);
+      };
+      if (!hasColumn('stories', 'memory_prev')) {
+        // Holds the dynamic_memory value captured just before the last extractor
+        // write, so rollback can restore server-side without relying on a
+        // client-supplied snapshot (TEMUAN-019/024/030).
+        db.exec("ALTER TABLE stories ADD COLUMN memory_prev TEXT DEFAULT NULL");
+      }
+    },
+  },
 ];
 
 export function runMigrations(db) {

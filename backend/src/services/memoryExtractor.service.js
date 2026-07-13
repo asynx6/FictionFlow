@@ -266,49 +266,107 @@ async function callExtractor({ existingMemory, userMessage, assistantMessage }) 
 }
 
 const updateMemoryStmt = db.prepare(`
-  UPDATE stories SET dynamic_memory = ?, updated_at = CURRENT_TIMESTAMP
+  UPDATE stories
+  SET dynamic_memory = ?, memory_prev = ?, updated_at = CURRENT_TIMESTAMP
   WHERE id = ?
 `);
 const getDynamicMemoryStmt = db.prepare(`
   SELECT dynamic_memory FROM stories WHERE id = ?
 `);
+// Fresh re-read of BOTH columns right before the write (inside the lock) so
+// concurrent extractors/auditors/summarizers on the same story don't clobber
+// each other from a stale snapshot (TEMUAN-006).
+const getDynamicMemoryForWriteStmt = db.prepare(`
+  SELECT dynamic_memory, memory_prev FROM stories WHERE id = ?
+`);
+
+// Per-story in-process mutex. better-sqlite3 transactions are synchronous but
+// the extractor LLM call is awaited between read and write — a second turn on
+// the same story can read the same base and last-write-wins. The mutex
+// serializes the whole read-merge-write critical section per story.
+const memoryLocks = new Map();
+async function withMemoryLock(storyId, fn) {
+  const prev = memoryLocks.get(storyId) ?? Promise.resolve();
+  let release;
+  const next = new Promise((resolve) => { release = resolve; });
+  memoryLocks.set(storyId, prev.then(() => next));
+  try {
+    await prev;
+    return await fn();
+  } finally {
+    release();
+    // Only clear if our promise is still the latest (avoid clearing a newer lock).
+    if (memoryLocks.get(storyId) === next) memoryLocks.delete(storyId);
+  }
+}
 
 export async function extractAndMergeFacts({ story, userMessage, assistantMessage }) {
   if (!story || !userMessage || !assistantMessage) return;
   if (userMessage.length < 8 && assistantMessage.length < 16) return;
 
-  const existingMemory = normalizeDynamicMemory(story.dynamic_memory);
+  // Snapshot the request-entry memory to feed the (slow) extractor LLM. The
+  // actual merge + write re-reads fresh inside the lock so concurrent writers
+  // don't clobber each other.
+  const baseMemory = normalizeDynamicMemory(story.dynamic_memory);
 
+  let incoming;
   try {
-    const incoming = await callExtractor({
-      existingMemory,
+    incoming = await callExtractor({
+      existingMemory: baseMemory,
       userMessage,
       assistantMessage,
     });
-    if (!incoming) return;
-
-    const merged = mergeDynamicMemory(existingMemory, incoming);
-    const capped = capMemory(merged);
-
-    // Only persist if anything actually changed (avoid a write storm when the
-    // extractor returns the same facts verbatim).
-    const totalBefore = totalFacts(existingMemory);
-    const totalAfter = totalFacts(capped);
-    const changed =
-      JSON.stringify(capped) !== JSON.stringify(existingMemory) ||
-      totalAfter !== totalBefore;
-
-    if (changed) {
-      updateMemoryStmt.run(JSON.stringify(capped), story.id);
-      callMemoryAuditor(story.id).catch(() => {});
-      summarizeFacts(story.id).catch(() => {});
-    }
   } catch (err) {
     console.error(
-      '[memoryExtractor] stage=merge story=' + story.id + ' err=' +
+      '[memoryExtractor] stage=call story=' + story.id + ' err=' +
         (err && err.message ? err.message : err)
     );
+    return;
   }
+  if (!incoming) return;
+
+  await withMemoryLock(story.id, async () => {
+    // Re-read fresh inside the lock; merge the LLM delta onto the LATEST
+    // memory, not the stale request snapshot. Atomically snapshot the
+    // pre-update value into memory_prev for server-side rollback.
+    const writeTx = db.transaction(() => {
+      const row = getDynamicMemoryForWriteStmt.get(story.id);
+      const latestRaw = row?.dynamic_memory ?? story.dynamic_memory;
+      const latestMemory = normalizeDynamicMemory(latestRaw);
+
+      const merged = mergeDynamicMemory(latestMemory, incoming);
+      const capped = capMemory(merged);
+
+      const totalBefore = totalFacts(latestMemory);
+      const totalAfter = totalFacts(capped);
+      const changed =
+        JSON.stringify(capped) !== JSON.stringify(latestMemory) ||
+        totalAfter !== totalBefore;
+      if (!changed) return false;
+
+      // Snapshot the value we're about to overwrite, for server-side rollback.
+      updateMemoryStmt.run(JSON.stringify(capped), latestRaw ?? '{}', story.id);
+      return true;
+    });
+
+    let wrote = false;
+    try {
+      wrote = writeTx();
+    } catch (err) {
+      console.error(
+        '[memoryExtractor] stage=write story=' + story.id + ' err=' +
+          (err && err.message ? err.message : err)
+      );
+      return;
+    }
+
+    if (wrote) {
+      // Serialize auditor + summarizer (previously parallel → last-write-wins
+      // race, TEMUAN-006). Both re-read fresh from DB.
+      try { await callMemoryAuditor(story.id); } catch { /* logged inside */ }
+      try { await summarizeFacts(story.id); } catch { /* logged inside */ }
+    }
+  });
 }
 
 // ─── Memory Auditor ─────────────────────────────────────────────────────────
@@ -390,8 +448,34 @@ export async function callMemoryAuditor(storyId) {
       }
     }
     if (removed > 0) {
-      updateMemoryStmt.run(JSON.stringify(next), storyId);
-      console.log(`[memoryAuditor] Dihapus ${removed} fakta obsolete dari story ${storyId}`);
+      // Apply the drop under the per-story lock against the LATEST memory (a
+      // concurrent extractor may have added facts since we read). Snapshot the
+      // overwritten value into memory_prev for server-side rollback.
+      await withMemoryLock(storyId, async () => {
+        const row = getDynamicMemoryForWriteStmt.get(storyId);
+        const latestRaw = row?.dynamic_memory ?? dynamicRaw;
+        const latest = normalizeDynamicMemory(latestRaw);
+        const mergedNext = { user: [], ai: [], world: [], relationship: [] };
+        let applied = 0;
+        for (const cat of VALID_CATEGORIES) {
+          const dropSet = new Set(
+            (Array.isArray(parsed[cat]) ? parsed[cat] : []).map((s) =>
+              (typeof s === 'string' ? s.toLowerCase().trim() : '')
+            ).filter(Boolean)
+          );
+          for (const f of latest[cat]) {
+            if (dropSet.has(f.toLowerCase().trim())) {
+              applied += 1;
+            } else {
+              mergedNext[cat].push(f);
+            }
+          }
+        }
+        if (applied > 0) {
+          updateMemoryStmt.run(JSON.stringify(mergedNext), latestRaw ?? '{}', storyId);
+          console.log(`[memoryAuditor] Dihapus ${applied} fakta obsolete dari story ${storyId}`);
+        }
+      });
     }
     return removed;
   } catch (err) {
@@ -452,12 +536,12 @@ export async function summarizeFacts(storyId) {
     if (!parsed || typeof parsed !== 'object') return total;
 
     // Always preserve tagged facts in relationship — summarizer MUST NOT lose them.
-    const next = { ...normalizeDynamicMemory({ ...memory, ...parsed }) };
+    const computedNext = { ...normalizeDynamicMemory({ ...memory, ...parsed }) };
     const existingTagged = memory.relationship.filter((f) => isTaggedFact(f));
     // Make sure every preserved tagged fact is still present in the merged result.
-    const mergedTagged = [...existingTagged, ...next.relationship];
+    const mergedTagged = [...existingTagged, ...computedNext.relationship];
     const seenTaggedKeys = new Set();
-    next.relationship = mergedTagged.filter((f) => {
+    computedNext.relationship = mergedTagged.filter((f) => {
       const k = taggedKeyOf(f);
       if (!k) return true;
       if (seenTaggedKeys.has(k)) return false;
@@ -465,9 +549,32 @@ export async function summarizeFacts(storyId) {
       return true;
     });
 
-    updateMemoryStmt.run(JSON.stringify(next), storyId);
-    console.log(`[memorySummarizer] Dirangkum ${total} → ${totalFacts(next)} fakta untuk story ${storyId}`);
-    return totalFacts(next);
+    // Write under the per-story lock against the LATEST memory (a concurrent
+    // extractor may have added facts since we read). Snapshot the overwritten
+    // value into memory_prev for server-side rollback.
+    let resultTotal = totalFacts(computedNext);
+    await withMemoryLock(storyId, async () => {
+      const row = getDynamicMemoryForWriteStmt.get(storyId);
+      const latestRaw = row?.dynamic_memory ?? dynamicRaw;
+      const latest = normalizeDynamicMemory(latestRaw);
+      // Re-apply the summarizer's parsed delta onto the latest memory, then
+      // re-run tagged preservation so we don't drop facts added concurrently.
+      const next = { ...normalizeDynamicMemory({ ...latest, ...parsed }) };
+      const latestTagged = latest.relationship.filter((f) => isTaggedFact(f));
+      const merged = [...latestTagged, ...next.relationship];
+      const seen = new Set();
+      next.relationship = merged.filter((f) => {
+        const k = taggedKeyOf(f);
+        if (!k) return true;
+        if (seen.has(k)) return false;
+        seen.add(k);
+        return true;
+      });
+      updateMemoryStmt.run(JSON.stringify(next), latestRaw ?? '{}', storyId);
+      resultTotal = totalFacts(next);
+      console.log(`[memorySummarizer] Dirangkum ${total} → ${resultTotal} fakta untuk story ${storyId}`);
+    });
+    return resultTotal;
   } catch (err) {
     console.warn('[memorySummarizer] Gagal:', err.message);
     return total;
@@ -479,4 +586,5 @@ export const __testing__ = {
   stripCodeFences,
   capMemory,
   TAGGED_KEYS,
+  withMemoryLock,
 };
