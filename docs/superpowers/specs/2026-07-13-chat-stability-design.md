@@ -47,9 +47,12 @@ session loop and partly share the same code path
   JSON envelope.
 - Click on a bubble's play button reaches audible output at most 2
   seconds after the click, regardless of provider or cache state.
-- The TTS button lifecycle is exactly: idle single play → loading
-  while fetching → 3-button state (pause / resume / stop) during
-  playback. No silent state changes.
+- The TTS button lifecycle is exactly:
+  - **idle**: one button (`volume_up` icon, "Dengarkan").
+  - **loading**: one button (`hourglass_top` icon, spin animation, "Memuat audio…"). The idle play icon is replaced entirely.
+  - **playing**: two buttons — `pause`/`resume` toggle (one button whose icon changes between `pause` and `play_arrow` based on state) and `stop`.
+  - **stop**: returns immediately to idle (the single `volume_up` button). Audio is paused and currentTime resets to 0.
+  - **resume from paused**: continues from the last paused timestamp (not from 0).
 
 ## Non-goals
 
@@ -184,44 +187,49 @@ The 3-tier cache stack is already in place from prior commits. We add:
   logger for diagnostic.
 - `frontend/public/sw.js` — confirm `skipWaiting()` already in place.
 
-### Component D — TTS button lifecycle (3-button gate)
+### Component D — TTS button lifecycle (2-button gate)
 
-The current button lifecycle is: idle single button → click → use
-state machine (idle / loading / playing / paused) on a single play
-button. User reported wanting a clearer 3-button flow during
-playback. So we split the button into:
+The current button lifecycle is: idle single button → click → state
+machine on a single play button. User requested a clearer 2-button
+flow during playback. So we replace the lone button with a small
+group carrying the actions:
 
-- **idle (no bubble playing yet)**: render one button. Tooltip
-  "Dengarkan".
-- **click → loading**: replace with a single span showing the
-  hourglass icon (spinning). Tooltip "Memuat audio…".
-- **fetch resolves → playing**: replace with **three buttons grouped
-  in a row**: pause (Paused state), resume (Paused→Playing), and
-  stop (full stop). The current single button is no longer
-  present in this state.
-- **click pause → paused**: pause icon disables, resume icon enables,
-  stop is still active. Idle state of "resume" button shows the play
-  icon.
-- **click resume → playing**: same as above but resume returns to
-  playing.
-- **click stop → idle**: stop returns immediately to single-button
-  idle state on this bubble.
-- **switch bubble mid-play**: previous bubble reverts to its idle
-  button, new bubble enters loading then 3-button.
+- **idle (no bubble playing yet)**: render one button
+  (`tts-play-btn`, icon `volume_up`, tooltip "Dengarkan").
+- **click → loading**: replace the play button entirely with the
+  `tts-loading-btn` (icon `hourglass_top` spin animation, tooltip
+  "Memuat audio…"). The play icon disappears while loading.
+- **fetch resolves → playing**: replace the loading button with a
+  **two-button group**: `tts-toggle-btn` (icon `pause`, tooltip
+  "Jeda") and `tts-stop-btn` (icon `stop`, tooltip "Hentikan"). The
+  toggle button icon and tooltip change with state.
+- **click toggle-btn → paused**: toggle icon becomes
+  `play_arrow`, tooltip becomes "Lanjutkan". `tts-stop-btn` stays
+  available. Audio playback pauses at the current `currentTime`.
+- **click toggle-btn → playing**: pause icon restored button. Audio
+  playback resumes from the same `currentTime` (we never reset
+  currentTime on pause).
+- **click stop → idle**: pause + `currentTime = 0`. The action
+  group reverts to a single `tts-play-btn`. No resume from a
+  previously-played position (currentTime reset).
 
-Visual layout: keep the three buttons inline (no toolbar); use
-`flex gap-1` so they sit next to each other. `data-state` attribute
-on a wrapper reflects "playing" / "paused" / "loading" so CSS can
-decorate hover / animation.
+Only one bubble plays at a time. Switching bubble mid-play: previous
+bubble reverts to its idle `tts-play-btn`; new bubble enters
+loading then 2-button state.
+
+Visual layout: 2-button group inline, `flex gap-1`. The toggle button
+label and icon switch in-place; we do not render two separate
+buttons for pause / resume.
 
 #### Files
 
 - `frontend/public/js/pages/story.page.js` — replace the single
-  `tts-play-btn` template with a wrapper carrying three buttons.
-  State machine stays the same; only the DOM wiring changes from
-  single target to three targets with data-action.
+  `tts-play-btn` template with a 3-element wrapper carrying play /
+  loading / toggle / stop. State machine stays the same; only the
+  DOM wiring changes. `_setTtsBtnState` swaps visibility + icon +
+  tooltip of the toggle button.
 - `frontend/public/css/tailwind.input.css` — add `.tts-action-group`
-  rules for the three-button container.
+  rules for the button layout and pulse animation.
 - The sanitizer (Component B) and the cache (Component C) continue
   to apply — only the visible chrome changes.
 
@@ -248,13 +256,17 @@ decorate hover / animation.
      Audio output starts within ~100ms. If SW is missing, click
      within 2s target is satisfied via backend cache.
 
-4. **3-button flow:**
-   - Click idle button → loading state visible ~150-300ms.
-   - Loading resolves → 3-button group appears.
-   - Click pause → 3-button group now in paused state with resume
-     highlighted.
-   - Click resume → back to playing state.
-   - Click stop → reverts to idle single-button.
+4. **2-button flow:**
+   - Click idle `volume_up` → icon swaps to `hourglass_top` (loading,
+     ~150–300ms typical).
+   - Loading resolves → 2-button group appears: toggle button
+     (currently `pause`) + stop button.
+   - Click pause → toggle button icon becomes `play_arrow`. Audio
+     paused at current currentTime. Stop still active.
+   - Click toggle (now `play_arrow`) → icon back to `pause`. Audio
+     resumes from the same currentTime (same `_ttsAudio` element).
+   - Click stop → reverts to single `volume_up` on this bubble.
+     `_ttsAudio.pause()` and `currentTime = 0` called.
 
 ## Self-check tests
 

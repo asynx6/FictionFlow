@@ -27,7 +27,7 @@
 | `frontend/public/js/api/apiClient.js` | add `loadAllMessages(storyId, {window})` helper that paginates with limit/offset | Task A |
 | `frontend/public/js/pages/story.page.js` | rewrite `loadStoryAndMessages` to incremental; add `sanitizeFinalContent`, apply it twice | Tasks A, B |
 | `frontend/public/js/pages/story.page.js` | SW boot probe + `prewarmTtsCache` after first paint | Task C |
-| `frontend/public/js/pages/story.page.js` | replace single `tts-play-btn` template + state machine with three-button group | Task D |
+| `frontend/public/js/pages/story.page.js` | replace single `tts-play-btn` template + state machine with two-button group (toggle + stop) | Task D |
 | `frontend/public/story.html` | bump `?v=N` cache buster; add a top progress bar `<div id="chatProgressBar">` mounting place | Tasks A, C |
 | `frontend/public/css/tailwind.input.css` | add gradient shimmer rules for the top progress bar | Task A |
 | `frontend/public/css/tailwind.input.css` | add `.tts-action-group` and per-button state rules | Task D |
@@ -449,181 +449,161 @@ git commit -m "perf(chat): SW boot probe + pre-warm latest 3 assistant bubbles"
 
 ---
 
-### Task D: 3-button TTS flow
+### Task D: 2-button TTS gate
 
 **Files:**
 - Modify: `frontend/public/js/pages/story.page.js`:
-  - In the bubble template, replace the single `tts-play-btn` with a wrapper carrying three `<button data-action="...">` children.
-  - Extend `_setTtsBtnState(btn, state)` to handle the wrapper's `data-state`.
-  - Add `_onTtsAction(wrapper, action)` dispatcher for pause / resume / stop actions.
-  - Register action via delegated click on `[data-tts-action]` instead of `.tts-play-btn`.
-- Modify: `frontend/public/css/tailwind.input.css`: add `.tts-action-group` and per-button state rules; add CSS for the playing/paused indicators.
+  - In the bubble template, replace the single `tts-play-btn` with a wrapper carrying four child elements: `tts-play-btn`, `tts-loading-btn`, `tts-toggle-btn`, `tts-stop-btn`.
+  - `_setTtsBtnState(wrapperEl, state)` updates visibility and the toggle button icon/tooltip based on state.
+  - `_onTtsAction(wrapper, action)` consolidates play / loading / toggle (pause ↔ resume) / stop.
+  - Delegated click handler targets `[data-tts-action]` instead of `.tts-play-btn`.
+- Modify: `frontend/public/css/tailwind.input.css`: add `.tts-action-group` rules and per-state visibility.
 - Modify: `frontend/public/story.html`: bump `?v=N` to `?v=38`.
 
 **Interfaces:**
-- Consumes: existing `_ttsAudio`, `_ttsCache`, `_activeTtsBtn` (module-scope symbols from prior commits).
-- Produces: a wrapper element with class `tts-action-group` carrying `data-state`, `data-msg-id`, plus three child buttons each with `data-action` and a unique `data-tts-action` key.
+- Consumes: existing `_ttsAudio`, `_ttsCache` (module-scope symbols from prior commits).
+- Produces: a wrapper element with class `tts-action-group` carrying `data-state`, `data-msg-id`, plus four `<button data-tts-action="...">` children.
 
 **Step 1 — Implement the new bubble template:**
 
 Find the render where `tts-play-btn` currently lives, replace it with:
 
 ```javascript
-const playAction = (icon, title, actionName) => `
-  <button class="tts-action-btn tts-${actionName}-btn"
-          data-tts-action="${actionName}"
-          data-msg-id="${msg.id}"
-          title="${title}">
-    <span class="material-icons-round text-[16px]">${icon}</span>
-  </button>`;
-
 const ttsGroupHtml = `
   <div class="tts-action-group opacity-0 group-hover:opacity-100 focus-within:opacity-100 flex items-center gap-1 transition-opacity"
        data-state="idle"
        data-msg-id="${msg.id}"
        data-text="${encodeURIComponent(messageContent)}">
-    ${playAction('volume_up', 'Dengarkan', 'play')}
-    <button class="tts-action-btn tts-loading-btn hidden" data-tts-action="loading" disabled title="Memuat audio…">
-      <span class="material-icons-round text-[16px] animate-spin">hourglass_top</span>
+    <button class="tts-action-btn tts-play-btn" data-tts-action="play" title="Dengarkan">
+      <span class="material-icons-round text-[16px]">volume_up</span>
     </button>
-    ${playAction('pause', 'Jeda', 'pause')}
-    ${playAction('play_arrow', 'Lanjutkan', 'resume')}
-    ${playAction('stop', 'Hentikan', 'stop')}
+    <button class="tts-action-btn tts-loading-btn" data-tts-action="loading" disabled title="Memuat audio…" aria-hidden="true">
+      <span class="material-icons-round text-[16px] tts-loading-icon">hourglass_top</span>
+    </button>
+    <button class="tts-action-btn tts-toggle-btn" data-tts-action="toggle" title="Jeda">
+      <span class="material-icons-round text-[16px]">pause</span>
+    </button>
+    <button class="tts-action-btn tts-stop-btn" data-tts-action="stop" title="Hentikan">
+      <span class="material-icons-round text-[16px]">stop</span>
+    </button>
   </div>
 `;
 ```
 
-Wire into the AI bubble template (`msg-ai-block` > `flex items-center gap-2 mt-1.5 pl-1` row) where the `tts-play-btn` is currently rendered.
+Wire it into the AI bubble template where the single `tts-play-btn` is currently rendered. The four children stay inside the wrapper at all times — visibility controlled by `data-state` via CSS.
 
-**Step 2 — Replace single-button state machine with group-state machine:**
+**Step 2 — Implement group-state machine:**
 
 ```javascript
-const _TTS_ICON_BY_STATE = {
-  idle: { play: 'volume_up',     pause: 'pause',       resume: 'play_arrow', stop: 'stop', loading: 'hourglass_top' },
-  loading: { play: 'volume_up', pause: 'pause',       resume: 'play_arrow', stop: 'stop', loading: 'hourglass_top' },
-  playing: { play: 'volume_up', pause: 'pause',       resume: 'play_arrow', stop: 'stop', loading: 'hourglass_top' },
-  paused:  { play: 'play_arrow', pause: 'pause hover', resume: 'play_arrow', stop: 'stop', loading: 'hourglass_top' },
+const _TTS_BUTTON_VISIBILITY_BY_STATE = {
+  idle:    new Set(['play']),
+  loading: new Set(['loading']),
+  playing: new Set(['toggle', 'stop']),
+  paused:  new Set(['toggle', 'stop']),
 };
 
 function _setTtsBtnState(wrapperEl, state) {
   if (!wrapperEl) return;
   wrapperEl.setAttribute('data-state', state);
-  const buttons = wrapperEl.querySelectorAll('[data-tts-action]');
-  for (const btn of buttons) {
+  const visibleActions = _TTS_BUTTON_VISIBILITY_BY_STATE[state] || _TTS_BUTTON_VISIBILITY_BY_STATE.idle;
+  for (const btn of wrapperEl.querySelectorAll('.tts-action-btn')) {
     const action = btn.getAttribute('data-tts-action');
-    btn.classList.toggle('hidden', action !== state && action !== 'loading');
-    btn.disabled = (action !== state && action !== 'loading') ? undefined : btn.disabled;
+    btn.classList.toggle('is-visible', visibleActions.has(action));
+    btn.classList.toggle('is-hidden', !visibleActions.has(action));
   }
+  // Toggle button icon + tooltip flip when paused vs playing.
+  const toggle = wrapperEl.querySelector('.tts-toggle-btn');
+  if (toggle) {
+    if (state === 'playing') {
+      toggle.querySelector('.material-icons-round').textContent = 'pause';
+      toggle.setAttribute('title', 'Jeda');
+    } else if (state === 'paused') {
+      toggle.querySelector('.material-icons-round').textContent = 'play_arrow';
+      toggle.setAttribute('title', 'Lanjutkan');
+    }
+  }
+  // Loading icon is the hourglass; the user already sees the spinner class.
 }
 ```
 
-Specifically:
-- `idle`: only the `play` button visible/clickable.
-- `loading`: only the `loading` (hourglass) button visible.
-- `playing`: `pause` and `stop` visible/clickable. `pause` is the active button.
-- `paused`: `resume` and `stop` visible/clickable. `resume` is the active button.
+Use `data-state="idle"|"loading"|"playing"|"paused"` as the single attribute that drives both visibility (CSS) and toggle icon (JS).
 
 **Step 3 — Add the delegated click dispatcher:**
 
 ```javascript
 document.addEventListener('click', (e) => {
-  const actionBtn = e.target.closest && e.target.closest('[data-tts-action]');
+  const actionBtn = e.target.closest && e.target.closest('.tts-action-btn');
   if (!actionBtn) return;
   e.stopPropagation();
   const wrapper = actionBtn.closest('.tts-action-group');
+  if (!wrapper) return;
   const action = actionBtn.getAttribute('data-tts-action');
-  _onTtsAction(wrapper, action);
+  void _onTtsAction(wrapper, action);
 });
 
 async function _onTtsAction(wrapper, action) {
-  const state = wrapper?.getAttribute('data-state') || 'idle';
-  const msgId = wrapper?.getAttribute('data-msg-id') || '';
-
+  const state = wrapper.getAttribute('data-state') || 'idle';
   if (action === 'play' && state === 'idle') {
     await _startTtsFor(wrapper);
     return;
   }
-  if (action === 'pause' && state === 'playing') {
+  if (action === 'toggle' && state === 'playing') {
     try { _ttsAudio.pause(); } catch {}
     _setTtsBtnState(wrapper, 'paused');
     return;
   }
-  if (action === 'resume' && state === 'paused') {
-    try { await _ttsAudio.play(); } catch (err) {
+  if (action === 'toggle' && state === 'paused') {
+    try {
+      await _ttsAudio.play();
+    } catch (err) {
       showTransientError?.(`Audio gagal diputar: ${err?.message || err}`);
     }
     _setTtsBtnState(wrapper, 'playing');
     return;
   }
-  if (action === 'stop') {
+  if (action === 'stop' && (state === 'playing' || state === 'paused')) {
     try { _ttsAudio.pause(); } catch {}
-    _ttsAudio.currentTime = 0;
-    _resetAllTtsBtns();
-    return;
-  }
-}
-
-async function _startTtsFor(wrapper) {
-  if (_activeTtsBtn && _activeTtsBtn !== wrapper) {
-    try { _ttsAudio.pause(); } catch {}
-    _resetAllTtsBtns();
-  }
-  if (msgId && _ttsCache.has(msgId)) {
-    _setTtsBtnState(wrapper, 'playing');
-    // ... existing reuse-blob logic (task B/C combined into single call)
-    return;
-  }
-  _setTtsBtnState(wrapper, 'loading');
-  let text = (decodeURIComponent(wrapper.getAttribute('data-text') ?? '') ?? '').trim();
-  if (!text) {
-    const bubble = wrapper.closest('.msg-ai-block');
-    const contentEl = bubble?.querySelector('.msg-content');
-    if (contentEl) text = (contentEl.textContent ?? '').trim();
-  }
-  if (!text) {
-    showTransientError?.('Pesan ini kosong, tidak ada yang bisa disuarakan.');
+    // Reset position so the next play starts from 0, not from where it
+    // was paused at. This is the user's stated preference — stop fully
+    // resets, including cached currentTime.
+    try { _ttsAudio.currentTime = 0; } catch {}
     _setTtsBtnState(wrapper, 'idle');
+    _activeTtsBtn = null;
     return;
-  }
-  const voice = resolveTtsVoice(__currentStoryCache);
-  try {
-    const blob = await apiClient.synthesizeTts({ text, voice });
-    _playBlobAsAudio(blob, wrapper, msgId);
-  } catch (err) {
-    showTransientError?.(`Audio gagal dimuat: ${err?.message || err}`);
-    _setTtsBtnState(wrapper, 'idle');
   }
 }
 ```
 
-**Step 4 — Update `_playBlobAsAudio` to use the wrapper instead of `btn`:**
+Notes on resume continuity: we never touch `_ttsAudio.currentTime` on pause/click-toggle. The browser preserves the playback position while paused. This is the explicit user requirement (`Kalau resume lanjutin tuh dari detik trakhir di pause`).
 
-The existing helper from commit cc6e852 takes `(blob, btn, msgId)` and references `btn.querySelector('.material-icons-round')`. Change the parameter name `btn` → `wrapper` for clarity, and update its body to set wrapper state instead of `btn.classList.add('is-tts-active')`:
+**Step 4 — Update `_startTtsFor` to set `playing` (not paused) on resolve:**
+
+The existing `_startTtsFor` from prior commits sets wrapper state in two paths (cache-hit and fetch-resolved). Both should end in `playing`. Inspect the existing helper; the change is one line per path:
 
 ```javascript
-function _playBlobAsAudio(blob, wrapper, msgId) {
-  // ... stop previous audio logic, same as before ...
-  if (msgId && _ttsCache.has(msgId)) {
-    const entry = _ttsCache.get(msgId);
-    if (entry?.url?.startsWith('blob:')) {
-      try { URL.revokeObjectURL(entry.url); } catch {}
-    }
-  }
-  const url = _newBlobUrl(blob);
-  if (msgId) {
-    _ttsCache.set(msgId, { blob, url });
-    _evictOldTtsCacheEntries();
-  }
-  _ttsAudio.src = url;
-  _activeTtsBtn = wrapper;
-  _setTtsBtnState(wrapper, 'playing');
-  // ... playback listeners unchanged ...
+// Cache hit path (after _ttsAudio.src = url; ...):
+_setTtsBtnState(wrapper, 'playing');
+
+// Fetch-resolved path (after _playBlobAsAudio):
+_setTtsBtnState(wrapper, 'playing');
+```
+
+If `_playBlobAsAudio` already sets the wrapper state internally to `'playing'`, leave it alone; otherwise add the explicit assignment.
+
+**Step 5 — Update `_resetAllTtsBtns`:**
+
+```javascript
+function _resetAllTtsBtns() {
+  document.querySelectorAll('.tts-action-group').forEach((grp) => {
+    _setTtsBtnState(grp, 'idle');
+  });
+  _activeTtsBtn = null;
 }
 ```
 
-`_resetAllTtsBtns` should iterate `.tts-action-group` and reset state to `'idle'`.
+Idle state shows the play button only and resets the toggle button back to its idle `pause` icon (in case it was on `play_arrow`).
 
-**Step 5 — Add CSS for the action group:**
+**Step 6 — Add CSS for the action group:**
 
 ```css
 .tts-action-group {
@@ -647,57 +627,71 @@ function _playBlobAsAudio(blob, wrapper, msgId) {
     transform 0.18s ease;
 }
 
-.tts-action-group .tts-action-btn:hover:not(:disabled):not([hidden]) {
+.tts-action-group .tts-action-btn.is-hidden {
+  display: none !important;
+}
+
+.tts-action-group .tts-action-btn:hover:not([disabled]) {
   color: rgb(var(--theme-accent));
   background-color: rgb(var(--theme-hover));
   transform: scale(1.06);
 }
 
-.tts-action-group .tts-action-btn[disabled],
-.tts-action-group .tts-action-btn.hidden {
-  visibility: hidden;
-  pointer-events: none;
+.tts-action-group .tts-action-btn[disabled] {
+  cursor: not-allowed;
 }
 
-.tts-action-group[data-state="playing"] .material-icons-round,
-.tts-action-group[data-state="paused"] .material-icons-round {
+.tts-action-group[data-state="playing"]  .tts-toggle-btn .material-icons-round,
+.tts-action-group[data-state="paused"]   .tts-toggle-btn .material-icons-round {
   animation: tts-pulse 1.2s ease-in-out infinite;
 }
 
-.tts-action-group[data-state="idle"] .tts-play-btn,
-.tts-action-group[data-state="playing"] .tts-pause-btn,
-.tts-action-group[data-state="playing"] .tts-stop-btn,
-.tts-action-group[data-state="paused"] .tts-resume-btn,
-.tts-action-group[data-state="paused"] .tts-stop-btn,
-.tts-action-group[data-state="loading"] .tts-loading-btn {
-  visibility: visible;
+.tts-action-group[data-state="loading"] .tts-loading-icon {
+  animation: tts-spin 1s linear infinite;
 }
 
 @keyframes tts-pulse {
   0%, 100% { opacity: 0.55; }
   50%      { opacity: 1; }
 }
+
+@keyframes tts-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tts-action-group[data-state="playing"]  .tts-toggle-btn .material-icons-round,
+  .tts-action-group[data-state="paused"]   .tts-toggle-btn .material-icons-round,
+  .tts-action-group[data-state="loading"] .tts-loading-icon {
+    animation: none !important;
+  }
+}
 ```
 
 Run `npm run build:css` and confirm it completes without error.
 
-**Step 6 — Manual verification:**
+**Step 7 — Manual verification flow (no automated DOM test):**
 
 Open browser → refresh → click 🔊 di bubble AI:
-1. Loading state visible (~150–300ms).
-2. 3-button group appears (pause, stop).
-3. Click pause → resume and stop visible (resume highlighted).
-4. Click resume → back to pause/stop.
-5. Click stop → reverts to single play button.
-6. Click play of another bubble mid-play → previous bubble reverts to play; new bubble enters loading then 3-button.
 
-**Step 7 — Commit:**
+| Step | Expected |
+|---|---|
+| 1 | Idle button visible (`volume_up` icon, "Dengarkan"). |
+| 2 | Click play → icon swaps to `hourglass_top` with spin animation. Tooltip "Memuat audio…". |
+| 3 | After fetch resolves (~150–300ms typical) → 2 buttons visible: toggle (`pause` icon, "Jeda") + stop (`stop` icon, "Hentikan"). |
+| 4 | Click toggle (currently pause) → icon swaps to `play_arrow`, tooltip "Lanjutkan". Audio paused at current `currentTime`. Stop remains as `stop`. |
+| 5 | Click toggle (now resume/play_arrow) → icon back to `pause`. Audio resumes from currentTime (no restart from 0). |
+| 6 | Click stop → audio paused + `currentTime = 0`. State → idle, single button shows again. |
+| 7 | Click play again → new round, behavior resets. |
+| 8 | Switch bubble mid-play: previous bubble reverts to idle single button; new bubble enters loading then 2-button. |
+
+**Step 8 — Commit:**
 
 ```bash
 git add frontend/public/js/pages/story.page.js \
         frontend/public/css/tailwind.input.css \
         frontend/public/story.html
-git commit -m "feat(chat): 3-button TTS lifecycle — play+pause/resume+stop per bubble"
+git commit -m "feat(chat): 2-button TTS gate — idle + loading + toggle + stop per bubble"
 ```
 
 ---
