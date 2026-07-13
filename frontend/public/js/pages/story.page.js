@@ -154,6 +154,27 @@ document.addEventListener('error', (e) => {
 const _ttsAudio = new Audio();
 let _activeTtsBtn = null;
 
+// Module-scope cache: msgId -> {blob, url}. Reusing a cached blob short-
+// circuits the second play to instant (Audio does not refetch). We keep
+// the entry even after playback ends so the user can replay without a
+// network roundtrip; cleanup happens on pagehide.
+const _ttsCache = new Map();
+
+// Limit cache to ~16 entries (oldest evicted) — protects long-running
+// sessions from unbounded memory growth.
+const _TTS_CACHE_LIMIT = 16;
+
+function _evictOldTtsCacheEntries() {
+  while (_ttsCache.size > _TTS_CACHE_LIMIT) {
+    const oldestKey = _ttsCache.keys().next().value;
+    const entry = _ttsCache.get(oldestKey);
+    if (entry?.url?.startsWith('blob:')) {
+      try { URL.revokeObjectURL(entry.url); } catch {}
+    }
+    _ttsCache.delete(oldestKey);
+  }
+}
+
 /**
  * Show transient non-blocking error toast di top-right — auto-dismiss
  * ~4s. Used by TTS load failure paths and audio.play() rejection.
@@ -228,28 +249,36 @@ function _newBlobUrl(blob) {
   return url;
 }
 
-function _playBlobAsAudio(blob, btn) {
+function _playBlobAsAudio(blob, btn, msgId) {
   // Stop anything currently playing.
   try { _ttsAudio.pause(); } catch {}
   if (_ttsAudio.src && _ttsAudio.src.startsWith('blob:')) {
     URL.revokeObjectURL(_ttsAudio.src);
   }
+  // Cache: reuse blob across plays via URL.createObjectURL; pick a fresh
+  // URL each time and revoke the previous one when superseded so we keep
+  // only one URL per msgId at a time.
+  const cached = msgId ? _ttsCache.get(msgId) : null;
+  if (cached?.url?.startsWith('blob:')) {
+    try { URL.revokeObjectURL(cached.url); } catch {}
+  }
   const url = _newBlobUrl(blob);
+  if (msgId) {
+    _ttsCache.set(msgId, { blob, url });
+    _evictOldTtsCacheEntries();
+  }
   _ttsAudio.src = url;
   _activeTtsBtn = btn;
 
   _ttsAudio.onended = () => {
-    URL.revokeObjectURL(url);
     _resetAllTtsBtns();
   };
   _ttsAudio.onerror = () => {
-    URL.revokeObjectURL(url);
     showTransientError('Audio gagal diputar.');
     _resetAllTtsBtns();
   };
   _setTtsBtnState(btn, 'playing');
   _ttsAudio.play().catch((err) => {
-    URL.revokeObjectURL(url);
     showTransientError(`Audio gagal dimuat: ${err?.message || err}`);
     _resetAllTtsBtns();
   });
@@ -257,6 +286,7 @@ function _playBlobAsAudio(blob, btn) {
 
 async function _onTtsPlayBtnClick(btn) {
   const state = btn.getAttribute('data-state') || 'idle';
+  const msgId = btn.getAttribute('data-msg-id') || '';
 
   // Pause / resume click while this bubble is the active one.
   if (btn === _activeTtsBtn) {
@@ -280,7 +310,52 @@ async function _onTtsPlayBtnClick(btn) {
     _resetAllTtsBtns();
   }
 
-  const text = (decodeURIComponent(btn.getAttribute('data-text') || '') || '').trim();
+  // Cached? Cache holds msgId -> {blob,url}. Reuse blob directly to avoid
+  // a network roundtrip. Audio.play() usually returns within ~50ms once
+  // the audio context is warm (first play pays the cold-start cost).
+  if (msgId && _ttsCache.has(msgId)) {
+    const entry = _ttsCache.get(msgId);
+    if (entry?.blob) {
+      _setTtsBtnState(btn, 'loading');
+      try { _ttsAudio.pause(); } catch {}
+      if (_ttsAudio.src?.startsWith('blob:')) {
+        try { URL.revokeObjectURL(_ttsAudio.src); } catch {}
+      }
+      // Reuse blob, generate fresh URL so playback can be re-triggered.
+      if (entry.url?.startsWith('blob:')) {
+        try { URL.revokeObjectURL(entry.url); } catch {}
+      }
+      const url = URL.createObjectURL(entry.blob);
+      entry.url = url;
+      _ttsAudio.src = url;
+      _activeTtsBtn = btn;
+      _ttsAudio.onended = () => _resetAllTtsBtns();
+      _ttsAudio.onerror = () => {
+        showTransientError('Audio gagal diputar.');
+        _resetAllTtsBtns();
+      };
+      _setTtsBtnState(btn, 'playing');
+      try {
+        await _ttsAudio.play();
+      } catch (err) {
+        showTransientError(`Audio gagal diputar: ${err?.message || err}`);
+        _resetAllTtsBtns();
+      }
+      return;
+    }
+  }
+
+  // Cache miss: read text from data-text with fallback to the bubble's
+  // rendered .msg-content. Some legacy or in-flight bubbles have empty
+  // data-text (e.g. AI mid-stream before backend landed `finalContent`).
+  let text = (decodeURIComponent(btn.getAttribute('data-text') || '') || '').trim();
+  if (!text) {
+    const bubble = btn.closest('.msg-ai-block');
+    const contentEl = bubble ? bubble.querySelector('.msg-content') : null;
+    if (contentEl) {
+      text = (contentEl.textContent || contentEl.innerText || '').trim();
+    }
+  }
   if (!text) {
     showTransientError('Pesan ini kosong, tidak ada yang bisa disuarakan.');
     return;
@@ -295,7 +370,7 @@ async function _onTtsPlayBtnClick(btn) {
   _setTtsBtnState(btn, 'loading');
   try {
     const blob = await apiClient.synthesizeTts({ text, voice });
-    _playBlobAsAudio(blob, btn);
+    _playBlobAsAudio(blob, btn, msgId);
   } catch (err) {
     _resetAllTtsBtns();
     showTransientError(`Audio gagal dimuat: ${err?.message || err}`);
@@ -310,10 +385,21 @@ document.addEventListener('click', (e) => {
 });
 
 // Stop any TTS that is still playing when the page is hidden so the
-// browser doesn't keep a phantom Audio() alive across navigation.
+// browser doesn't keep a phantom Audio() alive across navigation. Drop
+// the cached blob URLs at the same time — they become invalid after
+// navigation anyway, and we leak otherwise.
 window.addEventListener('pagehide', () => {
-  try { _ttsAudio.pause(); URL.revokeObjectURL(_ttsAudio.src); } catch {}
-  _resetTtsBtn();
+  try { _ttsAudio.pause(); } catch {}
+  if (_ttsAudio.src?.startsWith('blob:')) {
+    try { URL.revokeObjectURL(_ttsAudio.src); } catch {}
+  }
+  for (const [key, entry] of _ttsCache) {
+    if (entry?.url?.startsWith('blob:')) {
+      try { URL.revokeObjectURL(entry.url); } catch {}
+    }
+    _ttsCache.delete(key);
+  }
+  _resetAllTtsBtns();
 });
 
 document.addEventListener('DOMContentLoaded', async () => {
