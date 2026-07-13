@@ -324,59 +324,16 @@ export async function streamChat({
   );
   assistantMessageId = Number(ins.lastInsertRowid);
 
-  // Audio segments: tidak ada URL MP3 pre-baked.
-  // Frontend yang fetch sendiri ke POST /api/tts per segment saat user play.
-  const ttsEntries = audioSegments.map((seg, i) => ({
-    index: i,
-    text: seg.text,
-    gender: seg.gender,
-    type: seg.type,
-    voice_config: seg.voice_config,
-  }));
-
-  // TTS cache write (replay-safe). Transaction delete+insert untuk
-  // toleran retry tanpa UNIQUE constraint di schema.
-  try {
-    upsertMessageTts(
-      assistantMessageId,
-      story.id,
-      JSON.stringify(ttsEntries),
-      classifyProvider(ttsEntries)
-    );
-  } catch (err) {
-    // Cache failure tidak boleh block SSE done — log dan lanjut.
-    console.warn('[messages] message_tts cache write failed:', err.message);
-  }
+  // TTS feature has been removed from the user-facing UI; we no longer
+  // populate message_tts, no longer pre-synthesize MP3s, and no longer ship
+  // audio_segments[] over SSE. The message_tts table is left intact so
+  // historical rows from before the removal are still readable, and the
+  // /api/tts route stays in place for any future re-introduction.
 
   sendSse(res, 'done', {
     message_id: assistantMessageId,
     full_content: fullStoryText,
-    audio_segments: ttsEntries,
-    used_fallback_parse: usedFallbackParse,
   });
-
-  // Pre-synthesize semua audio segment ke LRU cache (non-blocking).
-  // Semua segmen pakai suara yang sama dari story setting (story.tts_voice).
-  // Begitu user klik "Dengarkan", semua segment sudah panas → < 1ms cache hit.
-  // Tidak delay SSE done — Promise.allSettled jalan setelah response flush.
-  //
-  // Concurrency limiter: max 3 parallel WebSocket ke Edge TTS per response.
-  // Microsoft rate-limits burst > 4 concurrent → 403/500. Queue sederhana
-  // pakai Promise chain tanpa dependency eksternal.
-  const ttsVoice = (story.tts_voice || 'id-ID-ArdiNeural').toString().trim();
-  (async () => {
-    const CONCURRENCY = 3;
-    for (let i = 0; i < ttsEntries.length; i += CONCURRENCY) {
-      const batch = ttsEntries.slice(i, i + CONCURRENCY);
-      await Promise.allSettled(
-        batch.map((seg, j) =>
-          synthesizeText(seg.text, ttsVoice).catch((err) =>
-            console.warn(`[messages] pre-synth cache miss [${i + j}/${ttsEntries.length}]:`, err.message)
-          )
-        )
-      );
-    }
-  })();
 
   // Memory extractor: kirim prosa yang sudah di-parse, bukan JSON mentah.
   if (assistantMessageId !== null && fullStoryText.trim().length > 0) {

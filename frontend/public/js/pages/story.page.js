@@ -1075,6 +1075,12 @@ document.addEventListener('DOMContentLoaded', async () => {
       const avatarHtml = isAvatarActive(currentStory)
         ? `<img src="${escapeHtmlAttr(currentStory.avatar_url)}" alt="${escapeHtmlAttr(currentStory.ai_name)}" class="avatar ai-avatar-slot w-8 h-8 sm:w-9 sm:h-9 rounded-full object-cover js-avatar-img" data-initial="${currentStory.ai_name.charAt(0).toUpperCase()}" />`
         : `<div class="avatar" aria-hidden="true">${currentStory.ai_name.charAt(0).toUpperCase()}</div>`;
+      // TTS feature has been removed from the user-facing UI; the toolbar
+      // (play/pause/resume/stop) is no longer rendered. Backend no longer
+      // emits audio_segments[] or populates message_tts either. The pending
+      // architectural removal of ttsEngine/ttsQueueManager is left for a
+      // follow-up commit — wire-up that targets `.tts-btn` / `data-action`
+      // simply becomes a no-op (target not in DOM).
       div.innerHTML = `
         <div class="msg-ai-block">
           ${avatarHtml}
@@ -1083,26 +1089,9 @@ document.addEventListener('DOMContentLoaded', async () => {
              <div class="msg-content prose-story">
                ${contentHtml}
              </div>
-             <div class="flex items-center gap-2 mt-1.5 pl-1">
-               <span class="tts-time text-[10px] text-theme-muted opacity-0 group-hover:opacity-100 transition-opacity">${timeLabel}</span>
-               <div class="tts-toolbar" data-state="idle" data-msg-id="${msg.id}" data-text="${encodeURIComponent(messageContent)}">
-                 <button class="tts-play-icon tts-btn" data-action="play" data-msg-id="${msg.id}" data-text="${encodeURIComponent(messageContent)}" title="Dengarkan">
-                   <span class="material-icons-round text-[14px]">volume_up</span>
-                 </button>
-                 <button class="tts-play-icon tts-btn hidden" data-action="loading" data-msg-id="${msg.id}" title="Memuat audio…" disabled>
-                   <span class="material-icons-round text-[14px] animate-spin">hourglass_top</span>
-                 </button>
-                 <button class="tts-pause-btn hidden" data-action="pause" data-msg-id="${msg.id}" title="Jeda">
-                   <span class="material-icons-round text-[14px]">pause</span>
-                 </button>
-                 <button class="tts-resume-btn hidden" data-action="resume" data-msg-id="${msg.id}" title="Lanjutkan">
-                   <span class="material-icons-round text-[14px]">play_arrow</span>
-                 </button>
-                 <button class="tts-stop-btn hidden" data-action="stop" data-msg-id="${msg.id}" title="Hentikan">
-                   <span class="material-icons-round text-[14px]">stop</span>
-                 </button>
-               </div>
-             </div>
+            <div class="flex items-center gap-2 mt-1.5 pl-1">
+              <span class="text-[10px] text-theme-muted opacity-0 group-hover:opacity-100 transition-opacity">${timeLabel}</span>
+            </div>
           </div>
         </div>
       `;
@@ -1596,16 +1585,18 @@ document.addEventListener('DOMContentLoaded', async () => {
           if (userMessageId) setBubbleRealId(userBubble, userMessageId);
           if (currentSendState) currentSendState.userMessageId = userMessageId;
         } else if (eventType === 'token') {
+          // Streaming tokens are intentionally NOT rendered into the bubble.
+          // The provider emits raw JSON bytes token-by-token (e.g. `{`,
+          // `"full_story":`, then prose chars). Showing them live would
+          // leak the JSON wrapper to the user. We just stay silent until
+          // 'done' fires, where the provider says full_content is
+          // already-clean prose.
+          //
+          // We still keep a buffer so any diagnostic logging can see
+          // what was sent; it is not appended to the DOM.
           const delta = data?.delta ?? data?.text ?? '';
           if (!delta) return;
-
-          const accumulated = displayedText + delta;
-          const cleaned = finalizeResponse(accumulated);
-          if (cleaned.length > displayedText.length) {
-            displayedText = cleaned;
-            updateBubbleContent(aiBubble, displayedText, false);
-            scrollToBottom();
-          }
+          displayedText += delta;
         } else if (eventType === 'error') {
           providerError = data;
           updateBubbleContent(aiBubble, 'AI provider error: menunggu konfirmasi...', false);
@@ -1613,27 +1604,13 @@ document.addEventListener('DOMContentLoaded', async () => {
         } else if (eventType === 'done') {
           aiMessageId = data?.message_id ?? null;
           if (currentSendState) currentSendState.aiMessageId = aiMessageId;
-          // Backend mengirim audio_segments[] untuk mixed-mode TTS (Azure URL + Web Speech fallback).
-          // Backend kirim `full_content` = full_story (prosa), sudah bersih dari JSON wrapper.
-          const finalContent = data?.full_content ?? displayedText;
+          // Backend kirim `full_content` = full_story (prosa) — sudah
+          // bersih dari JSON wrapper, di-trim oleh controller. Render final.
+          const finalContent = data?.full_content ?? '';
           displayedText = finalContent;
           updateBubbleContent(aiBubble, finalContent, false);
           if (aiMessageId) {
             setBubbleRealId(aiBubble, aiMessageId);
-            const segs = Array.isArray(data?.audio_segments) ? data.audio_segments : null;
-            if (segs && segs.length > 0) {
-              currentAudioSegments[aiMessageId] = segs;
-              const ttsBtn = aiBubble.querySelector('.tts-btn');
-              if (ttsBtn) {
-                // Stash segments sebagai JSON di attribute.
-                _stashSegments(ttsBtn, segs);
-                ttsBtn.setAttribute('data-text', encodeURIComponent(finalContent));
-                ttsBtn.title = `Dengarkan (${segs.length} segmen)`;
-              }
-            } else {
-              const ttsBtn = aiBubble.querySelector('.tts-btn');
-              if (ttsBtn) ttsBtn.setAttribute('data-text', encodeURIComponent(finalContent));
-            }
           }
         }
       }, sendSignal);
