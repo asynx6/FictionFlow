@@ -125,7 +125,10 @@ export const apiClient = {
 
   /**
    * Incremental chat-load paginator used by the story page. Returns an async
-   * iterable that yields message batches newest-first.
+   * iterable that yields message BATCHES newest-batch-first (the newest window
+   * batch first, then progressively older history batches). WITHIN each batch
+   * the server returns messages oldest-first (it queries DESC then reverses),
+   * so each yielded array reads oldest→newest — both renderers rely on this.
    *
    *   Phase 1 (window): GET `/messages?limit=initialWindow`. The server
    *      returns up to `initialWindow` newest messages; we drain them in one
@@ -176,87 +179,6 @@ export const apiClient = {
       }
     }
   },
-  sendMessage: (id, payload, { onEvent, signal } = {}) =>
-    new Promise((resolve, reject) => {
-      fetch(`${BASE}/stories/${id}/messages`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-        signal,
-      })
-        .then(async (res) => {
-          if (!res.ok || !res.body) {
-            const errBody = await parseJsonSafe(res);
-            const err = new Error(errBody?.message ?? `HTTP ${res.status}`);
-            err.status = res.status;
-            reject(err);
-            return;
-          }
-          const reader = res.body.getReader();
-          const decoder = new TextDecoder('utf-8');
-          let buffer = '';
-          let result = { message_id: null, full_content: '' };
-
-          const processLine = (line) => {
-            if (!line.startsWith('data:')) return null;
-            const payload = line.slice(5).trim();
-            if (!payload) return null;
-            try {
-              return JSON.parse(payload);
-            } catch {
-              return null;
-            }
-          };
-
-          const pump = () => {
-            reader.read().then(({ value, done }) => {
-              if (done) {
-                resolve(result);
-                return;
-              }
-              buffer += decoder.decode(value, { stream: true });
-              let idx;
-              while ((idx = buffer.indexOf('\n\n')) >= 0) {
-                const block = buffer.slice(0, idx);
-                buffer = buffer.slice(idx + 2);
-                const lines = block.split('\n');
-                let eventName = 'message';
-                const dataLines = [];
-                for (const ln of lines) {
-                  if (ln.startsWith('event:')) {
-                    eventName = ln.slice(6).trim();
-                  } else if (ln.startsWith('data:')) {
-                    dataLines.push(ln.slice(5).trim());
-                  }
-                }
-                const dataStr = dataLines.join('\n');
-                if (!dataStr) continue;
-                let data = null;
-                try { data = JSON.parse(dataStr); } catch { /* ignore */ }
-                if (onEvent) onEvent(eventName, data);
-                if (eventName === 'token' && data?.text) {
-                  result.full_content += data.text;
-                } else if (eventName === 'done' && data) {
-                  result.message_id = data.message_id ?? result.message_id;
-                  result.full_content = data.full_content ?? result.full_content;
-                } else if (eventName === 'error') {
-                  reject(new Error(data?.message ?? 'Stream error'));
-                  reader.cancel();
-                  return;
-                }
-              }
-              pump();
-            }).catch((err) => {
-              if (err.name !== 'AbortError') reject(err);
-            });
-          };
-          pump();
-        })
-        .catch((err) => {
-          if (err.name !== 'AbortError') reject(err);
-        });
-    }),
-
   listVoicePresets: (id) => request(`/stories/${id}/voice-presets`),
   updateVoicePreset: (id, tag, patch) =>
     request(`/stories/${id}/voice-presets/${encodeURIComponent(tag)}`, {

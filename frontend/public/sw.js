@@ -36,8 +36,6 @@ const APP_SHELL = [
   '/js/pages/dashboard.page.js',
   '/js/core/themeManager.js',
   '/js/core/eventBus.js',
-  '/js/core/ttsQueueManager.js',
-  '/js/core/ttsEngine.js',
   '/js/core/markdownRenderer.js',
   '/js/api/apiClient.js',
   '/manifest.webmanifest',

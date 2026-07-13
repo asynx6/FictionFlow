@@ -19,7 +19,10 @@ function decorateDialogue(tokens) {
   }
 }
 
-const originalRender = md.render.bind(md);
+// Decorate dialogue tokens (quote-prefixed inline) with a `dialogue` class by
+// monkey-patching md.render. renderMarkdown calls the OVERRIDDEN md.render so
+// the decoration actually runs — previously it called the pre-override bound
+// originalRender and the dialogue styling was dead (TEMUAN-059).
 md.render = function (src, env) {
   const tokens = md.parse(src ?? '', env);
   decorateDialogue(tokens);
@@ -28,5 +31,5 @@ md.render = function (src, env) {
 
 export function renderMarkdown(text) {
   if (!text) return '';
-  return originalRender(text);
+  return md.render(text);
 }

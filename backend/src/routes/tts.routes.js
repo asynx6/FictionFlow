@@ -13,6 +13,7 @@
 import { Router } from 'express';
 import { synthesizeText, warmup, warmupVoice, DEFAULT_VOICE_MALE, DEFAULT_VOICE_FEMALE } from '../services/edgeTts.service.js';
 import { HttpError } from '../middlewares/errorHandler.js';
+import { env } from '../config/env.js';
 
 const router = Router();
 
@@ -67,7 +68,7 @@ router.post('/', async (req, res, next) => {
     res.setHeader('X-Tts-Voice', voice);
     res.setHeader('X-Tts-Elapsed-Ms', String(elapsed));
     res.setHeader('X-Tts-Cache', elapsed < 50 ? 'hit' : 'miss');
-    if (process.env.NODE_ENV !== 'production') {
+    if (env.NODE_ENV !== 'production') {
       console.log(`[tts] ${voice} len=${buffer.length}b ${elapsed}ms`);
     }
     res.end(buffer);
@@ -95,7 +96,7 @@ router.post('/warmup', async (req, res, next) => {
     if (voiceExplicit) {
       validateVoiceOrThrow(voiceExplicit);
     }
-    if (process.env.NODE_ENV !== 'production') {
+    if (env.NODE_ENV !== 'production') {
       console.log(`[tts] warmup start: voice=${voiceExplicit || 'all'}${wait ? ' (sync)' : ''}`);
     }
     if (wait) {

@@ -133,10 +133,12 @@ export async function* streamChatCompletion({ messages, signal }) {
 // dominant UX cost here, not savings from one or two retries.
 //
 // Configure via env if a slow provider needs more breathing room.
-const FIRST_BYTE_TIMEOUT_MS = (() => {
-  const v = Number.parseInt((process.env.MODEL_FIRST_BYTE_TIMEOUT_MS ?? '').toString(), 10);
-  return Number.isFinite(v) && v >= 1000 ? v : 25_000;
-})();
+const FIRST_BYTE_TIMEOUT_MS = env.MODEL_FIRST_BYTE_TIMEOUT_MS;
+
+// Non-streaming completion (memory extractor/auditor/summarizer) first-response
+// timeout. Mirrors the streaming first-byte guard so a hung provider can't leave
+// the extractor's promise unresolved forever (TEMUAN-018).
+const NONSTREAM_TIMEOUT_MS = FIRST_BYTE_TIMEOUT_MS;
 
 async function _fetchWithFirstByteTimeout(url, init, timeoutMs) {
   // AbortController scoped to this request — separate from caller `signal`
@@ -257,13 +259,14 @@ async function* streamSingleModel({ modelValue, body, signal }) {
         buffer += decoder.decode(value, { stream: true });
 
         let lineEnd;
+        let sawDone = false;
         while ((lineEnd = buffer.indexOf('\n')) >= 0) {
           const line = buffer.slice(0, lineEnd).trim();
           buffer = buffer.slice(lineEnd + 1);
           if (!line || !line.startsWith('data:')) continue;
 
           const payload = line.slice(5).trim();
-          if (payload === '[DONE]') return;
+          if (payload === '[DONE]') { sawDone = true; break; }
 
           let parsed;
           try {
@@ -275,11 +278,14 @@ async function* streamSingleModel({ modelValue, body, signal }) {
           const delta = parsed?.choices?.[0]?.delta?.content;
           if (delta) yield { type: 'token', text: delta };
         }
+        if (sawDone) break;
       }
     } finally {
       try { reader.releaseLock(); } catch { /* ignore */ }
     }
 
+    // Unify completion: yield the done chunk exactly once whether the provider
+    // sent an explicit [DONE] marker or the reader hit EOF (TEMUAN-022).
     yield { type: 'done' };
     return;
   }
@@ -291,16 +297,27 @@ async function* streamSingleModel({ modelValue, body, signal }) {
  * Non-streaming chat completion across the model chain (memory extractor).
  * Tries each slot in order until one returns a usable response.
  *
- * @param {{ messages: object[], signal?: AbortSignal, temperature?: number }} opts
+ * @param {{ messages: object[], signal?: AbortSignal, temperature?: number, max_tokens?: number }} opts
  * @returns {Promise<string>}
  */
-export async function chatCompletionOnce({ messages, signal, temperature }) {
+export async function chatCompletionOnce({ messages, signal, temperature, max_tokens }) {
   const errors = [];
   for (const entry of env.MODEL_CHAIN) {
     const body = { model: entry.value, messages, stream: false };
     if (typeof temperature === 'number') body.temperature = temperature;
+    if (Number.isFinite(max_tokens) && max_tokens > 0) body.max_tokens = max_tokens;
     assertBodyFits(body);
 
+    // First-response timeout: previously the non-streaming path had no guard,
+    // so a hung provider left the extractor's promise unresolved forever
+    // (TEMUAN-018). Compose the caller's signal with an internal timeout.
+    const timeoutCtl = new AbortController();
+    const timer = setTimeout(() => timeoutCtl.abort(), NONSTREAM_TIMEOUT_MS);
+    const onCallerAbort = () => timeoutCtl.abort();
+    if (signal) {
+      if (signal.aborted) timeoutCtl.abort();
+      else signal.addEventListener('abort', onCallerAbort, { once: true });
+    }
     try {
       const res = await fetch(`${env.MODEL_PROVIDER_BASE_URL}/chat/completions`, {
         method: 'POST',
@@ -309,7 +326,7 @@ export async function chatCompletionOnce({ messages, signal, temperature }) {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify(body),
-        signal,
+        signal: timeoutCtl.signal,
       });
 
       if (!res.ok) {
@@ -331,6 +348,9 @@ export async function chatCompletionOnce({ messages, signal, temperature }) {
         `[modelProvider] ${entry.key}=${entry.value} gagal: ${err.message}. ` +
           'Lanjut ke model berikutnya dalam chain.'
       );
+    } finally {
+      clearTimeout(timer);
+      if (signal) signal.removeEventListener('abort', onCallerAbort);
     }
   }
   const last = errors[errors.length - 1];

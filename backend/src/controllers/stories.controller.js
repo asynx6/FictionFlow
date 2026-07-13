@@ -46,10 +46,6 @@ const deleteStoryStmt = db.prepare(`
   DELETE FROM stories WHERE id = ?
 `);
 
-const deleteMessagesStmt = db.prepare(`
-  DELETE FROM messages WHERE story_id = ?
-`);
-
 // 4 Edge TTS voices allowed per-story. Match dengan frontend dropdown.
 const ALLOWED_TTS_VOICES = new Set([
   'id-ID-ArdiNeural',   // Indonesian male (default)
@@ -171,6 +167,9 @@ export function createStory(req, res) {
     ai_name: req.body.ai_name?.toString(),
     ai_personality: req.body.ai_personality?.toString(),
     target_ending: req.body.target_ending?.toString(),
+    // Include language_style so its 80-char cap (STORY_FIELD_MAX_LENGTH) is
+    // enforced at create time, matching the update path (TEMUAN-056).
+    language_style: req.body.language_style?.toString(),
   };
   for (const [key, raw] of Object.entries(createRaw)) {
     if (raw === undefined) continue;
@@ -417,17 +416,14 @@ export function deleteStory(req, res) {
 
 export function hardDeleteStory(req, res) {
   const id = req.params.id;
-  // Delete messages first, then story, dalam satu transaksi supaya
-  // atomic. Kalau crash di tengah, DB tidak masuk state inkonsisten.
-  const tx = db.transaction(() => {
-    deleteMessagesStmt.run(id);
-    const result = deleteStoryStmt.run(id);
-    if (result.changes === 0) {
-      throw new HttpError(404, 'Story tidak ditemukan.');
-    }
-    return result;
-  });
-  tx();
+  // Rely on FK ON DELETE CASCADE (foreign_keys=ON) for messages, message_tts,
+  // and voice_presets — single-strategy deletion instead of the previous
+  // asymmetric mix of manual messages delete + implicit cascade for the rest
+  // (TEMUAN-037). Atomic via the story-row delete.
+  const result = deleteStoryStmt.run(id);
+  if (result.changes === 0) {
+    throw new HttpError(404, 'Story tidak ditemukan.');
+  }
   res.json({
     success: true,
     data: { id },

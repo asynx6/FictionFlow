@@ -53,6 +53,10 @@ function parseGenerated(raw) {
   return JSON.parse(cleaned);
 }
 
+// ponytail: no auth/rate-limit on this provider-invoking endpoint — assumes
+// self-hosted localhost-only binding (single-user). If the port is ever exposed
+// externally, add a shared-secret header or localhost-only bind + throttle to
+// prevent unbounded paid provider LLM calls (TEMUAN-054).
 router.post('/character', async (req, res, next) => {
   const prompt = (req.body?.prompt ?? '').toString().trim();
   if (!prompt) {

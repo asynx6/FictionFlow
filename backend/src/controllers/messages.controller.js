@@ -270,11 +270,18 @@ export async function streamChat({
   // it doesn't linger unanswered (TASK-011 / TEMUAN-055).
   let assistantSaved = false;
   const abortCtrl = new AbortController();
-  const heartbeat = setInterval(() => {
-    res.write(':\n\n');
-  }, 15000);
+  // Heartbeat is started only after the FIRST token arrives, so the SSE comment
+  // line never precedes the first token on a slow-to-respond provider. The
+  // first-byte timeout (modelProvider) governs the pre-token wait; once tokens
+  // flow, a 15s keep-alive comment keeps proxies from closing the idle
+  // connection (TEMUAN-053).
+  let heartbeat = null;
+  const startHeartbeat = () => {
+    if (heartbeat) return;
+    heartbeat = setInterval(() => { res.write(':\n\n'); }, 15000);
+  };
   res.on('close', () => {
-    clearInterval(heartbeat);
+    if (heartbeat) clearInterval(heartbeat);
     abortCtrl.abort();
     // Client disconnect mid-stream before assistant saved → remove the orphan
     // user message. Covers refresh-during-stream (which looks identical to
@@ -294,6 +301,7 @@ export async function streamChat({
         // Real-time preview: kirim token apa adanya (frontend bisa hide saat
         // JSON dan reveal full_story setelah parsing selesai).
         sendSse(res, 'token', { text: chunk.text });
+        startHeartbeat();
       } else if (chunk.type === 'done') {
         break;
       }
@@ -389,13 +397,15 @@ export async function streamChat({
   });
 
   // Pre-synthesize semua audio segment ke LRU cache (non-blocking).
-  // Semua segmen pakai suara yang sama dari story setting (story.tts_voice).
+  // Semua segmen pakai suara yang sama dari story setting (story.tts_voice) —
+  // frontend resolveTtsVoice(story) uses the same value, so there is no
+  // pre-synth vs play voice mismatch (C-002 verified non-defect).
   // Begitu user klik "Dengarkan", semua segment sudah panas → < 1ms cache hit.
   // Tidak delay SSE done — Promise.allSettled jalan setelah response flush.
   //
-  // Concurrency limiter: max 3 parallel WebSocket ke Edge TTS per response.
-  // Microsoft rate-limits burst > 4 concurrent → 403/500. Queue sederhana
-  // pakai Promise chain tanpa dependency eksternal.
+  // Concurrency: the global semaphore in edgeTts.service (MAX_CONCURRENT=3,
+  // process-wide) gates every WebSocket open across ALL responses, not just
+  // this one — so concurrent chats share the 3-slot pool (TEMUAN-036).
   const ttsVoice = (story.tts_voice || 'id-ID-ArdiNeural').toString().trim();
   (async () => {
     const CONCURRENCY = 3;

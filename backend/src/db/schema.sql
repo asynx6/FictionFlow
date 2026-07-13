@@ -61,8 +61,11 @@ CREATE TABLE IF NOT EXISTS messages (
     token_estimate  INTEGER DEFAULT 0
 );
 
+-- Covers the list/recent queries' full ORDER BY (created_at DESC, id DESC) so
+-- rows sharing a 1-second CURRENT_TIMESTAMP don't need an in-memory id sort
+-- (TEMUAN-038). Replaces the narrower (story_id, created_at) index.
 CREATE INDEX IF NOT EXISTS idx_messages_story_created
-    ON messages(story_id, created_at);
+    ON messages(story_id, created_at DESC, id DESC);
 
 -- Mapping tag karakter -> konfigurasi suara, per-story.
 CREATE TABLE IF NOT EXISTS voice_presets (

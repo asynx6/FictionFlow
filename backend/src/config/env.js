@@ -75,6 +75,14 @@ export const env = {
     5,
     4
   ),
+
+  // First-byte timeout for provider streaming + non-streaming completions.
+  // Centralized here so all process.env access goes through one config module
+  // (TEMUAN-016). Clamped to >= 1000ms; default 25s.
+  MODEL_FIRST_BYTE_TIMEOUT_MS: (() => {
+    const n = Number.parseInt((process.env.MODEL_FIRST_BYTE_TIMEOUT_MS ?? '').toString(), 10);
+    return Number.isFinite(n) && n >= 1000 ? n : 25_000;
+  })(),
 };
 
 function clampInt(value, min, max, fallback) {

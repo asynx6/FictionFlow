@@ -35,11 +35,13 @@ const deleteMessageStmt = db.prepare(`
 `);
 // Fallback lookup kalau frontend belum sempat capture user_message_id
 // dari SSE meta event (e.g. abort sangat awal sebelum meta terkirim).
-// Hapus user message terbaru by story_id + content match — relatif aman
-// karena rollback terjadi dalam window singkat setelah POST /messages.
+// Hapus user message terbaru by story_id + content match, scoped to the last
+// 30s so a duplicate-content message from an earlier turn isn't wrongly
+// deleted (TEMUAN-051).
 const findLatestUserMessageByContentStmt = db.prepare(`
   SELECT id FROM messages
   WHERE story_id = ? AND role = 'user' AND raw_content = ?
+    AND created_at >= datetime('now','-30 seconds')
   ORDER BY created_at DESC, id DESC
   LIMIT 1
 `);

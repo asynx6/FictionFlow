@@ -9,6 +9,24 @@ class ThemeManager {
     this.currentTheme = this.#resolveInitialTheme();
     // Apply immediately synchronously before any render to avoid theme flash
     document.documentElement.setAttribute('data-theme', this.currentTheme);
+    this.#applyThemeColor(this.currentTheme);
+  }
+
+  // OS chrome (mobile address bar / installed PWA) color per theme, so the
+  // browser chrome matches the active theme instead of always showing the dark
+  // #1a1a1a from the static <meta name="theme-color"> (TEMUAN-066).
+  #THEME_COLORS = { dark: '#1a1a1a', light: '#f5f5f5', coffee: '#3b2f2f' };
+
+  #applyThemeColor(theme) {
+    const color = this.#THEME_COLORS[theme];
+    if (!color) return;
+    let meta = document.querySelector('meta[name="theme-color"]');
+    if (!meta) {
+      meta = document.createElement('meta');
+      meta.setAttribute('name', 'theme-color');
+      document.head.appendChild(meta);
+    }
+    meta.setAttribute('content', color);
   }
 
   #migrateLegacyTheme() {
@@ -39,6 +57,7 @@ class ThemeManager {
     this.currentTheme = theme;
     localStorage.setItem(this.STORAGE_KEY, theme);
     document.documentElement.setAttribute('data-theme', theme);
+    this.#applyThemeColor(theme);
     EventBus.emit(Events.THEME_CHANGED, { theme });
   }
 

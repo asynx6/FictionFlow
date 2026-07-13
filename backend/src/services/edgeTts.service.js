@@ -26,10 +26,16 @@ export const DEFAULT_VOICE_FEMALE_EN = 'en-US-JennyNeural';
 export const VALID_PACKS = new Set(['id-ID', 'en-US']);
 
 /**
- * In-process LRU cache untuk synthesized MP3. Edge TTS Mengirim ke Microsoft
- * endpoint via WebSocket (~1-4s first call cold-start). Cache key =
- * sha1(text+voice+rate+volume+pitch). FIFO eviction saat > MAX_CACHE_SIZE —
- * small but covers 1 cerita (1 voice pack, banyak replay = no recompute).
+ * In-process LRU cache for synthesized MP3. Edge TTS sends to the Microsoft
+ * endpoint via WebSocket (~1-4s first-call cold-start). Cache key =
+ * sha1(text+voice+rate+volume+pitch). Eviction is LRU: cacheGet touches via
+ * delete+re-insert, cachePut evicts the oldest (front) entry when over
+ * MAX_CACHE_SIZE. Covers one story (one voice pack, many replays = no recompute).
+ *
+ * ponytail: bounded by entry COUNT (128), not bytes. The ceiling assumption is
+ * the 5000-char text cap in tts.routes — at ~tens of KB per MP3 that's a few MB.
+ * If the text limit is ever raised or a higher-bitrate voice is added, add a
+ * soft byte ceiling tracked alongside the count (TEMUAN-052).
  */
 const MAX_CACHE_SIZE = 128;
 const synthCache = new Map();
@@ -278,14 +284,27 @@ async function _doSynthesize(text, voice, options) {
 
     // Outer 8s timeout. Edge TTS WebSocket kadang hang tanpa error di
     // first-hit (DNS/auth cold path). 8s = fail-fast supaya frontend bisa
-    // retry atau surface error ke user tanpa nunggu.
+    // retry atau surface error ke user tanpa nunggu. Retain the timer id so
+    // it can be cleared when streamPromise wins the race — otherwise every
+    // successful synthesis leaks an armed 8s timer (TEMUAN-023).
+    let hardTimer;
     const hardTimeout = new Promise((_, reject) => {
-      setTimeout(() => reject(new Error('EdgeTTS: timeout 8s (endpoint lambat / tidak merespons).')), 8000);
+      hardTimer = setTimeout(() => reject(new Error('EdgeTTS: timeout 8s (endpoint lambat / tidak merespons).')), 8000);
     });
 
-    return await Promise.race([streamPromise, ttsError, hardTimeout]);
+    try {
+      return await Promise.race([streamPromise, ttsError, hardTimeout]);
+    } finally {
+      clearTimeout(hardTimer);
+    }
   } catch (err) {
-    throw new Error(classifyError(err));
+    // Tag the error as a TTS transport failure so the process-level
+    // uncaughtException/unhandledRejection handlers can classify it by
+    // property instead of brittle substring matching on the message
+    // (TEMUAN-015). Preserve the classified message.
+    const wrapped = new Error(classifyError(err));
+    wrapped.isTtsTransport = true;
+    throw wrapped;
   } finally {
     if (onError) process.removeListener('uncaughtException', onError);
   }
@@ -357,11 +376,15 @@ export async function synthesizeText(text, voice = DEFAULT_VOICE_MALE) {
   const task = (async () => {
     try {
       const buffer = await runWithRetry(cleaned, voice, opts);
-      if (buffer && isLikelyValidMp3(buffer)) {
-        cachePut(key, buffer);
-      } else if (buffer) {
-        console.warn(`[tts] Synthesized buffer too small/corrupt (size=${buffer.length}b), not cached.`);
+      if (!buffer || !isLikelyValidMp3(buffer)) {
+        // Don't return a corrupt/unplayable buffer as a 200 audio/mpeg — the
+        // route would ship non-playable bytes and the frontend play() would
+        // fail with no error signal (TEMUAN-050). Throw so the route returns
+        // 500 and the frontend can surface a retry.
+        console.warn(`[tts] Synthesized buffer invalid (size=${buffer?.length ?? 0}b), rejecting.`);
+        throw new Error('TTS synthesis menghasilkan audio tidak valid.');
       }
+      cachePut(key, buffer);
       return buffer;
     } finally {
       inflightSynth.delete(key);
@@ -372,13 +395,14 @@ export async function synthesizeText(text, voice = DEFAULT_VOICE_MALE) {
 }
 
 /**
- * Validate MP3 file has minimum sane ukuran ATAU ID3/MP3 magic bytes
- * present. Edge TTS kadang return garbage yang size-nya kecil tapi bukan
- * audio playable.
+ * Validate an MP3 buffer. Accept if it carries valid ID3v2 magic ("ID3") or an
+ * MPEG sync byte (0xFFEx) at the start — regardless of size, so short dialogue
+ * segments (e.g. a one-word "Iya." that produces a valid < 2KB MP3) are not
+ * rejected as corrupt (TEMUAN-048). Fall back to the size floor only when no
+ * magic bytes are present (catches tiny garbage WebSocket chunks).
  */
 function isLikelyValidMp3(buf) {
-  if (!buf || buf.length < MIN_VALID_MP3_SIZE) return false;
-  // Check ID3v2 magic ("ID3") di awal ATAU MPEG sync byte (0xFFEx) di awal.
+  if (!buf || buf.length === 0) return false;
   if (buf.length >= 3) {
     const id3 = buf[0] === 0x49 && buf[1] === 0x44 && buf[2] === 0x33; // "ID3"
     if (id3) return true;
@@ -387,8 +411,8 @@ function isLikelyValidMp3(buf) {
     const sync = (buf[0] === 0xff) && ((buf[1] & 0xe0) === 0xe0); // MPEG sync
     if (sync) return true;
   }
-  // Tidak ada magic bytes terdeteksi — anggap corrupt.
-  return false;
+  // No magic bytes — only trust it if it's at least the size floor.
+  return buf.length >= MIN_VALID_MP3_SIZE;
 }
 
 /**

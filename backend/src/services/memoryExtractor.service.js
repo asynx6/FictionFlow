@@ -23,6 +23,32 @@ function totalFacts(memory) {
 }
 
 /**
+ * Normalize a fact string for fuzzy equality matching: lowercase, trim, and
+ * collapse internal whitespace runs to a single space. Used by the auditor
+ * dropset so a fact flagged for deletion still matches when the stored entry
+ * has different internal spacing (TEMUAN-045).
+ */
+function normalizeForMatch(s) {
+  return String(s ?? '').toLowerCase().trim().replace(/\s+/g, ' ');
+}
+
+/**
+ * Order-insensitive deep-equality of two categorized memories: compare each
+ * category as a sorted lowercased array set. Replaces JSON.stringify
+ * comparison, which flagged spurious writes when the same facts arrived in a
+ * different order or with key-order differences (TEMUAN-041/044).
+ */
+function memoryEqual(a, b) {
+  for (const cat of VALID_CATEGORIES) {
+    const aa = (a[cat] ?? []).slice().map((s) => String(s).toLowerCase()).sort();
+    const bb = (b[cat] ?? []).slice().map((s) => String(s).toLowerCase()).sort();
+    if (aa.length !== bb.length) return false;
+    for (let i = 0; i < aa.length; i++) if (aa[i] !== bb[i]) return false;
+  }
+  return true;
+}
+
+/**
  * Build the canonical return string list the extractor expects the LLM to
  * produce. Single source of truth — also used by validators/tests.
  */
@@ -220,11 +246,71 @@ function stripCodeFences(text) {
   return trimmed;
 }
 
+/**
+ * Extract the first balanced `{...}` object from text (e.g. an LLM that
+ * prefixed its JSON with prose like "Berikut memori: {...}"). Scans for the
+ * first `{`, tracks brace depth (ignoring braces inside strings), and returns
+ * the substring spanning the first top-level object — or null if none found.
+ * Used as a fallback when raw JSON.parse fails (TEMUAN-043).
+ */
+function extractFirstJsonObject(text) {
+  const s = text ?? '';
+  let start = -1;
+  let depth = 0;
+  let inString = false;
+  let escape = false;
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    if (inString) {
+      if (escape) { escape = false; continue; }
+      if (ch === '\\') { escape = true; continue; }
+      if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') { inString = true; continue; }
+    if (ch === '{') {
+      if (depth === 0) start = i;
+      depth += 1;
+    } else if (ch === '}') {
+      depth -= 1;
+      if (depth === 0 && start >= 0) return s.slice(start, i + 1);
+    }
+  }
+  return null;
+}
+
+function parseMemoryJson(raw) {
+  const cleaned = stripCodeFences(raw);
+  try {
+    return JSON.parse(cleaned);
+  } catch {
+    // Fallback: model prefixed JSON with prose. Try to salvage the embedded
+    // object before giving up (TEMUAN-043).
+    const objStr = extractFirstJsonObject(cleaned);
+    if (!objStr) return null;
+    try { return JSON.parse(objStr); } catch { return null; }
+  }
+}
+
+/**
+ * Truncate a long message to a budget while keeping both the head and the tail.
+ * Relationship-status changes often appear near the end of a long AI reply, so
+ * a head-only slice missed them (TEMUAN-042). When the text fits the budget it
+ * is returned verbatim; otherwise head + "[...]" + tail.
+ */
+function headTail(text, budget = 2000) {
+  const s = (text ?? '').toString();
+  if (s.length <= budget) return s;
+  const tailLen = Math.floor(budget * 0.3);
+  const headLen = budget - tailLen - 5; // 5 for the "[...]" marker
+  return `${s.slice(0, headLen)}[...]${s.slice(-tailLen)}`;
+}
+
 async function callExtractor({ existingMemory, userMessage, assistantMessage }) {
   const systemPrompt = FACT_EXTRACTION_SYSTEM_PROMPT
     .replace('{{CURRENT_MEMORY_JSON}}', JSON.stringify(existingMemory, null, 0))
-    .replace('{{USER_MESSAGE}}', userMessage.slice(0, 2000))
-    .replace('{{AI_REPLY}}', assistantMessage.slice(0, 2000));
+    .replace('{{USER_MESSAGE}}', headTail(userMessage, 2000))
+    .replace('{{AI_REPLY}}', headTail(assistantMessage, 2000));
 
   let raw;
   try {
@@ -240,10 +326,12 @@ async function callExtractor({ existingMemory, userMessage, assistantMessage }) 
     return null;
   }
 
-  const cleaned = stripCodeFences(raw);
+  const parsed = parseMemoryJson(raw);
+  if (!parsed || typeof parsed !== 'object') {
+    console.error('[memoryExtractor] stage=parse model=' + getConfiguredModelId() + ' err=unparseable output');
+    return null;
+  }
   try {
-    const parsed = JSON.parse(cleaned);
-    if (!parsed || typeof parsed !== 'object') return null;
     const out = { user: [], ai: [], world: [], relationship: [] };
     for (const cat of VALID_CATEGORIES) {
       const arr = parsed[cat];
@@ -310,18 +398,28 @@ export async function extractAndMergeFacts({ story, userMessage, assistantMessag
   const baseMemory = normalizeDynamicMemory(story.dynamic_memory);
 
   let incoming;
-  try {
-    incoming = await callExtractor({
-      existingMemory: baseMemory,
-      userMessage,
-      assistantMessage,
-    });
-  } catch (err) {
-    console.error(
-      '[memoryExtractor] stage=call story=' + story.id + ' err=' +
-        (err && err.message ? err.message : err)
-    );
-    return;
+  // Bounded retry with backoff for transient extractor failures (provider
+  // hiccup, parse blip). Previously a single transient failure silently
+  // skipped memory extraction for the turn, losing relationship state changes
+  // (TEMUAN-047). 2 attempts total, ~500ms apart.
+  const MAX_EXTRACT_ATTEMPTS = 2;
+  for (let attempt = 1; attempt <= MAX_EXTRACT_ATTEMPTS; attempt++) {
+    try {
+      incoming = await callExtractor({
+        existingMemory: baseMemory,
+        userMessage,
+        assistantMessage,
+      });
+      if (incoming) break;
+    } catch (err) {
+      console.error(
+        '[memoryExtractor] stage=call story=' + story.id + ' attempt=' + attempt + ' err=' +
+          (err && err.message ? err.message : err)
+      );
+    }
+    if (attempt < MAX_EXTRACT_ATTEMPTS) {
+      await new Promise((r) => setTimeout(r, 500 * attempt));
+    }
   }
   if (!incoming) return;
 
@@ -337,11 +435,10 @@ export async function extractAndMergeFacts({ story, userMessage, assistantMessag
       const merged = mergeDynamicMemory(latestMemory, incoming);
       const capped = capMemory(merged);
 
-      const totalBefore = totalFacts(latestMemory);
-      const totalAfter = totalFacts(capped);
-      const changed =
-        JSON.stringify(capped) !== JSON.stringify(latestMemory) ||
-        totalAfter !== totalBefore;
+      // Order-insensitive deep-equal so a no-op extraction (same facts, different
+      // order / key order) doesn't trigger a spurious write + auditor/summarizer
+      // fan-out (TEMUAN-041/044).
+      const changed = !memoryEqual(capped, latestMemory);
       if (!changed) return false;
 
       // Snapshot the value we're about to overwrite, for server-side rollback.
@@ -427,20 +524,19 @@ export async function callMemoryAuditor(storyId) {
       temperature: 0.2,
     });
     if (!response) return 0;
-    const cleaned = stripCodeFences(response);
-    const parsed = JSON.parse(cleaned);
+    const parsed = parseMemoryJson(response);
     if (!parsed || typeof parsed !== 'object') return 0;
 
     let removed = 0;
     const next = { user: [], ai: [], world: [], relationship: [] };
     for (const cat of VALID_CATEGORIES) {
       const dropSet = new Set(
-        (Array.isArray(parsed[cat]) ? parsed[cat] : []).map((s) =>
-          (typeof s === 'string' ? s.toLowerCase().trim() : '')
-        ).filter(Boolean)
+        (Array.isArray(parsed[cat]) ? parsed[cat] : [])
+          .map((s) => (typeof s === 'string' ? normalizeForMatch(s) : ''))
+          .filter(Boolean)
       );
       for (const f of memory[cat]) {
-        if (!dropSet.has(f.toLowerCase().trim())) {
+        if (!dropSet.has(normalizeForMatch(f))) {
           next[cat].push(f);
         } else {
           removed += 1;
@@ -459,12 +555,12 @@ export async function callMemoryAuditor(storyId) {
         let applied = 0;
         for (const cat of VALID_CATEGORIES) {
           const dropSet = new Set(
-            (Array.isArray(parsed[cat]) ? parsed[cat] : []).map((s) =>
-              (typeof s === 'string' ? s.toLowerCase().trim() : '')
-            ).filter(Boolean)
+            (Array.isArray(parsed[cat]) ? parsed[cat] : [])
+              .map((s) => (typeof s === 'string' ? normalizeForMatch(s) : ''))
+              .filter(Boolean)
           );
           for (const f of latest[cat]) {
-            if (dropSet.has(f.toLowerCase().trim())) {
+            if (dropSet.has(normalizeForMatch(f))) {
               applied += 1;
             } else {
               mergedNext[cat].push(f);
@@ -531,47 +627,34 @@ export async function summarizeFacts(storyId) {
       temperature: 0.2,
     });
     if (!response) return total;
-    const cleaned = stripCodeFences(response);
-    const parsed = JSON.parse(cleaned);
+    const parsed = parseMemoryJson(response);
     if (!parsed || typeof parsed !== 'object') return total;
 
-    // Always preserve tagged facts in relationship — summarizer MUST NOT lose them.
-    const computedNext = { ...normalizeDynamicMemory({ ...memory, ...parsed }) };
-    const existingTagged = memory.relationship.filter((f) => isTaggedFact(f));
-    // Make sure every preserved tagged fact is still present in the merged result.
-    const mergedTagged = [...existingTagged, ...computedNext.relationship];
-    const seenTaggedKeys = new Set();
-    computedNext.relationship = mergedTagged.filter((f) => {
-      const k = taggedKeyOf(f);
-      if (!k) return true;
-      if (seenTaggedKeys.has(k)) return false;
-      seenTaggedKeys.add(k);
-      return true;
-    });
-
     // Write under the per-story lock against the LATEST memory (a concurrent
-    // extractor may have added facts since we read). Snapshot the overwritten
+    // extractor may have added facts since we read). The merge below preserves
+    // tagged state (mergeRelationshipFacts: latest-wins by key) and narrative
+    // facts the summarizer LLM omitted (TEMUAN-020). Snapshot the overwritten
     // value into memory_prev for server-side rollback.
-    let resultTotal = totalFacts(computedNext);
+    let resultTotal = total;
     await withMemoryLock(storyId, async () => {
       const row = getDynamicMemoryForWriteStmt.get(storyId);
       const latestRaw = row?.dynamic_memory ?? dynamicRaw;
       const latest = normalizeDynamicMemory(latestRaw);
-      // Re-apply the summarizer's parsed delta onto the latest memory, then
-      // re-run tagged preservation so we don't drop facts added concurrently.
-      const next = { ...normalizeDynamicMemory({ ...latest, ...parsed }) };
-      const latestTagged = latest.relationship.filter((f) => isTaggedFact(f));
-      const merged = [...latestTagged, ...next.relationship];
-      const seen = new Set();
-      next.relationship = merged.filter((f) => {
-        const k = taggedKeyOf(f);
-        if (!k) return true;
-        if (seen.has(k)) return false;
-        seen.add(k);
-        return true;
-      });
-      updateMemoryStmt.run(JSON.stringify(next), latestRaw ?? '{}', storyId);
-      resultTotal = totalFacts(next);
+      const parsedNorm = normalizeDynamicMemory(parsed);
+      // MERGE (not replace) so narrative facts the summarizer LLM omitted are
+      // not permanently lost (TEMUAN-020). Relationship uses mergeRelationshipFacts
+      // (tagged latest-wins + narrative dedup); other categories use dedupNarrative.
+      const next = {
+        user: dedupNarrative(latest.user, parsedNorm.user),
+        ai: dedupNarrative(latest.ai, parsedNorm.ai),
+        world: dedupNarrative(latest.world, parsedNorm.world),
+        relationship: mergeRelationshipFacts(latest.relationship, parsedNorm.relationship),
+      };
+      // Re-apply cap so a merge that grew past the cap still trims oldest
+      // narrative (tagged state always kept).
+      const capped = capMemory(next);
+      updateMemoryStmt.run(JSON.stringify(capped), latestRaw ?? '{}', storyId);
+      resultTotal = totalFacts(capped);
       console.log(`[memorySummarizer] Dirangkum ${total} → ${resultTotal} fakta untuk story ${storyId}`);
     });
     return resultTotal;
@@ -587,4 +670,8 @@ export const __testing__ = {
   capMemory,
   TAGGED_KEYS,
   withMemoryLock,
+  memoryEqual,
+  parseMemoryJson,
+  headTail,
+  normalizeForMatch,
 };

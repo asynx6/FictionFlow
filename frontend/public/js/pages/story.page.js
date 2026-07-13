@@ -152,9 +152,9 @@ function pickEdgeVoiceForSegment(pack, gender) {
   return g === 'female' ? 'id-ID-GadisNeural' : 'id-ID-ArdiNeural';
 }
 
-// playSegment / playSegmentBrowser / playNextSegment were removed —
-// ttsQueueManager is the only playback pipeline, and that pipeline was
-// also removed in this commit series.
+// playSegment / playSegmentBrowser / playNextSegment were removed — the old
+// segment-based ttsQueueManager/ttsEngine pipeline was deleted (TEMUAN-057).
+// Live playback is the inline _ttsAudio path below.
 
 // audio_segments path was removed; the per-message segment cache is gone.
 // Each story still binds one voice (story.tts_voice) — kept as constants
