@@ -5,7 +5,7 @@ const getRecentStmt = db.prepare(`
   SELECT id, role, raw_content, created_at
   FROM messages
   WHERE story_id = ?
-  ORDER BY created_at DESC
+  ORDER BY created_at DESC, id DESC
   LIMIT ?
 `);
 
@@ -22,11 +22,18 @@ function clampWindow(value, fallback) {
  * Membangun payload context untuk dikirim ke model AI sesuai Bab 6.3:
  *   1. System prompt dari Long-Term Memory (tabel stories).
  *   2. Short-Term Memory: N pertukaran terakhir (N x 2 baris).
- *   3. Pesan user yang baru dikirim di akhir payload.
+ *
+ * The newest user message is already in the DB by the time this runs (POST
+ * /messages inserts it before streamChat), so getRecentStmt includes it as
+ * the last row. It is NOT re-appended — previously a second copy was pushed
+ * onto the end, sending the user's turn twice (TEMUAN-003). The
+ * `latestUserMessage` param is retained for signature compatibility but is
+ * no longer used here; the controller passes the raw text separately to the
+ * memory extractor, which needs it independently of the prompt.
  *
  * Mengabaikan pesan dengan content kosong/whitespace-only.
  */
-export function buildContextPayload(story, latestUserMessage) {
+export function buildContextPayload(story, _latestUserMessage) {
   const window = clampWindow(story.short_term_window, 4);
   const recentDesc = getRecentStmt.all(story.id, window * 2);
   const recentAsc = recentDesc
@@ -43,11 +50,6 @@ export function buildContextPayload(story, latestUserMessage) {
     { role: 'system', content: systemPrompt },
     ...recentAsc.map((m) => ({ role: m.role, content: m.raw_content.trim() })),
   ];
-
-  // Only append user message if it has real content
-  if (typeof latestUserMessage === 'string' && latestUserMessage.trim().length > 0) {
-    messages.push({ role: 'user', content: latestUserMessage.trim() });
-  }
 
   return messages;
 }
