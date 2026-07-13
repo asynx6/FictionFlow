@@ -1285,33 +1285,27 @@ document.addEventListener('DOMContentLoaded', async () => {
       }
       if (voicePack) voicePack.value = settledVoice;
 
-      // SYNC warmup untuk story's chosen voice: blocking sampai cache ready
-      // atau 25s timeout. Tujuannya = first user click dijamin instant response.
+      // Spinner reflects message loading, NOT TTS warmup. Warmup is kicked off
+      // fire-and-forget below so it never blocks the first paint (previously a
+      // blocking wait:true call could hold the spinner up to 25s — BUG-03).
       if (loadingChat) {
         loadingChat.innerHTML = `
           <div class="flex flex-col items-center gap-2">
             <span class="material-icons-round animate-spin text-theme-accent text-3xl">autorenew</span>
-            <span class="text-xs text-theme-muted">Menyiapkan suara: ${settledVoice.replace(/^([^-]+-[^-]+).*/, '$1')}</span>
+            <span class="text-xs text-theme-muted">Memuat percakapan…</span>
           </div>
         `;
       }
-      let warmReady = false;
-      try {
-        const r = await apiClient.warmupTts({ voice: settledVoice, wait: true });
-        warmReady = r?.data?.ready === true;
-        console.log('[tts-warm] sync warmup result:', r);
-      } catch (err) {
-        console.warn('[tts-warm] sync warmup error:', err?.message);
-      }
-      if (!warmReady) {
-        console.warn(`[tts-warm] sync warmup timeout/incomplete untuk ${settledVoice}. First click mungkin slow.`);
-      }
 
-      // Background warm untuk 3 other voices (tidak blok UI).
+      // Fire-and-forget warmup for the story's chosen voice + the 3 other
+      // voices. Non-blocking: real-message prewarm (prewarmLatestAssistantTts
+      // below + the done-handler prewarm) is what actually warms the cache for
+      // playback; this just primes the Edge TTS WebSocket pool.
+      void apiClient.warmupTts({ voice: settledVoice, wait: false }).catch(() => {});
       try {
         const others = fallbacks.filter((v) => v !== settledVoice);
         others.forEach((voice, i) => {
-          setTimeout(() => apiClient.warmupTts({ voice }).catch(() => {}), 500 * (i + 1));
+          setTimeout(() => apiClient.warmupTts({ voice, wait: false }).catch(() => {}), 500 * (i + 1));
         });
       } catch (e) { console.warn('[story] warmupTts batch failed:', e.message); }
 
@@ -1696,6 +1690,16 @@ document.addEventListener('DOMContentLoaded', async () => {
           updateBubbleContent(aiBubble, finalContent, false);
           if (aiMessageId) {
             setBubbleRealId(aiBubble, aiMessageId);
+          }
+          // Prewarm TTS for this newly-finished AI message so the backend +
+          // SW Edge TTS cache is warm BEFORE the user clicks play. Same voice
+          // the play button will request (story.tts_voice), so the cache key
+          // matches and first-play latency drops to ~cache-hit (BUG-03).
+          // Fire-and-forget; silent on failure (best-effort).
+          const prewarmText = (finalContent ?? '').trim();
+          const prewarmVoice = resolveTtsVoice(currentStory);
+          if (prewarmText && prewarmVoice) {
+            void apiClient.synthesizeTts({ text: prewarmText, voice: prewarmVoice }).catch(() => {});
           }
         }
       }, sendSignal);

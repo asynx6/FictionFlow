@@ -34,6 +34,13 @@ export const VALID_PACKS = new Set(['id-ID', 'en-US']);
 const MAX_CACHE_SIZE = 128;
 const synthCache = new Map();
 
+// In-flight synthesis dedup: cache key -> Promise<Buffer>. When a cache miss
+// races (e.g. frontend play fetch + backend pre-synth fetch for the same
+// text/voice arrive before either completes), both callers await the SAME
+// running promise instead of opening two Edge TTS WebSockets for identical
+// work (TEMUAN-009). Entry is removed on settle (resolve or reject).
+const inflightSynth = new Map();
+
 function cacheKey(text, voice, opts) {
   const h = createHash('sha1');
   h.update(text);
@@ -342,13 +349,26 @@ export async function synthesizeText(text, voice = DEFAULT_VOICE_MALE) {
       return cached;
     }
   }
-  const buffer = await runWithRetry(cleaned, voice, opts);
-  if (buffer && isLikelyValidMp3(buffer)) {
-    cachePut(key, buffer);
-  } else if (buffer) {
-    console.warn(`[tts] Synthesized buffer too small/corrupt (size=${buffer.length}b), not cached.`);
-  }
-  return buffer;
+  // Single-flight: if an identical synthesis is already running, await it
+  // instead of opening a second WebSocket (TEMUAN-009).
+  const existing = inflightSynth.get(key);
+  if (existing) return existing;
+
+  const task = (async () => {
+    try {
+      const buffer = await runWithRetry(cleaned, voice, opts);
+      if (buffer && isLikelyValidMp3(buffer)) {
+        cachePut(key, buffer);
+      } else if (buffer) {
+        console.warn(`[tts] Synthesized buffer too small/corrupt (size=${buffer.length}b), not cached.`);
+      }
+      return buffer;
+    } finally {
+      inflightSynth.delete(key);
+    }
+  })();
+  inflightSynth.set(key, task);
+  return task;
 }
 
 /**
@@ -372,44 +392,29 @@ function isLikelyValidMp3(buf) {
 }
 
 /**
- * Warm-up: pre-populate cache untuk voice default supaya first user click
- * mendapat instant response. Idempotent (kalau sudah warm, return).
- * Frontend fire-and-forget upon page load.
+ * Warm-up hook. The Edge TTS cache is content-addressed by text hash, so a
+ * fixed dummy string never matches a real playback key — synthesizing it
+ * only wasted a WebSocket call and (with wait:true) blocked render up to 25s
+ * for nothing (TEMUAN-013). Real-text prewarm now warms the cache: the
+ * post-render `prewarmLatestAssistantTts` and the SSE `done`-handler prewarm
+ * synthesize actual message text, which also primes the Sec-MS-GEC token
+ * path on first use.
  *
- * Mengambil 3 short dummy text untuk ARDI (default male). Tidak perlu semua
- * 4 voices di-warm — kartu paling dominan (voice user-set) ambil dari
- * loadStoryAndMessages yang bisa call warmupText(voice) langsung.
+ * These are now idempotent no-ops that resolve to a truthy sentinel so the
+ * guard short-circuits on repeat calls (TEMUAN-049: previously the resolved
+ * value was undefined/falsy and every page load re-warmed). The /api/tts/warmup
+ * route stays for compatibility but does no dummy synthesis.
  */
 let warmupPromise = null;
 
-function warmupText(text, voice) {
-  return synthesizeText(text, voice).catch((err) => {
-    console.warn(`[tts] warmup(${voice}) gagal: ${err.message}`);
-    return null;
-  });
-}
-
 export async function warmup() {
   if (warmupPromise) return warmupPromise;
-  warmupPromise = (async () => {
-    const start = Date.now();
-    // Parallel preload 4 voices with same short text. Future user clicks
-    // untuk voice manapun akan hit cache (< 50ms).
-    await Promise.all([
-      warmupText('Halo, saya siap membantu Anda.', DEFAULT_VOICE_MALE),
-      warmupText('Halo, saya siap membantu Anda.', DEFAULT_VOICE_FEMALE),
-      warmupText('Halo, saya siap membantu Anda.', DEFAULT_VOICE_MALE_EN),
-      warmupText('Halo, saya siap membantu Anda.', DEFAULT_VOICE_FEMALE_EN),
-    ]);
-    console.log(`[tts] warmed 4 voices in ${Date.now() - start}ms`);
-  })().catch((err) => {
-    console.warn('[tts] warmup all gagal:', err.message);
-    warmupPromise = null; // reset agar retry berikutnya attempt fresh
-  });
+  warmupPromise = Promise.resolve(true);
   return warmupPromise;
 }
 
 /** Warm single voice (called from frontend after reading story.tts_voice). */
-export async function warmupVoice(voice) {
-  await warmupText('Halo, saya siap membantu Anda.', voice);
+export async function warmupVoice(_voice) {
+  // No-op: real-text prewarm covers playback; dummy synthesis never hit.
+  return true;
 }
