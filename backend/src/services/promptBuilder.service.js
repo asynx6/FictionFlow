@@ -26,6 +26,8 @@ const GENDER_INSTRUCTIONS = {
   neutral: 'Karakter AI gender-nya netral/ambigu, gunakan panggilan netral saat self-reference.',
 };
 
+import { normalizeDynamicMemory, canonicalizeRelationshipFact, taggedKeyOf } from '../util/dynamicMemory.js';
+
 const FACT_CATEGORY_LABELS = {
   user: 'Tentang User',
   ai: 'Tentang AI',
@@ -34,64 +36,19 @@ const FACT_CATEGORY_LABELS = {
 };
 
 /**
- * Parse both the legacy `[{category,key,value}]` array AND the new
- * `{user,ai,world,relationship}` object schema, returning the canonical
- * string-array shape. New object wins, legacy arrays auto-mapped.
- */
-function parseDynamicMemory(raw) {
-  const empty = { user: [], ai: [], world: [], relationship: [] };
-  if (!raw) return empty;
-  let parsed;
-  if (typeof raw === 'string') {
-    try { parsed = JSON.parse(raw); } catch { return empty; }
-  } else {
-    parsed = raw;
-  }
-  if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-    const out = { ...empty };
-    for (const cat of ['user', 'ai', 'world', 'relationship']) {
-      const arr = parsed[cat];
-      if (Array.isArray(arr)) {
-        for (const item of arr) {
-          if (typeof item === 'string' && item.trim()) out[cat].push(item.trim());
-        }
-      }
-    }
-    return out;
-  }
-  if (Array.isArray(parsed)) {
-    const out = { ...empty };
-    for (const item of parsed) {
-      if (!item || typeof item !== 'object') continue;
-      const cat = ['user', 'ai', 'world', 'relationship'].includes(item.category)
-        ? item.category : 'world';
-      const k = typeof item.key === 'string' ? item.key.trim() : '';
-      const v = typeof item.value === 'string' ? item.value.trim() : '';
-      if (!v) continue;
-      out[cat].push(k ? `${k}: ${v}` : v);
-    }
-    return out;
-  }
-  return empty;
-}
-
-const REL_TAGGED_KEYS = ['STATUS', 'AI_PANGGILAN', 'USER_PANGGILAN', 'SEJAK', 'KONTEKS_PERILAKU'];
-
-/**
  * Parse the tagged state-fact sub-array inside `relationship[]`.
  * Returns an object keyed by STATUS / AI_PANGGILAN / etc. — only present
- * keys are included.
+ * keys are included. Uses tolerant canonicalization so facts stored without
+ * exact `[KEY]:` brackets are still read as state.
  */
 export function parseRelationshipState(relationshipFacts = []) {
   const state = {};
   for (const fact of relationshipFacts) {
     if (typeof fact !== 'string') continue;
-    for (const key of REL_TAGGED_KEYS) {
-      if (fact.startsWith(`[${key}]:`)) {
-        state[key] = fact.slice(`[${key}]:`.length).trim();
-        break;
-      }
-    }
+    const key = taggedKeyOf(fact);
+    if (!key) continue;
+    const canon = canonicalizeRelationshipFact(fact);
+    state[key] = canon.slice(`[${key}]: `.length).trim();
   }
   return state;
 }
@@ -103,7 +60,7 @@ export function parseRelationshipState(relationshipFacts = []) {
  * unobtrusive until the extractor populates the first tagged fact).
  */
 export function buildCurrentContextBlock(story) {
-  const memory = parseDynamicMemory(story?.dynamic_memory);
+  const memory = normalizeDynamicMemory(story?.dynamic_memory);
   const rel = memory.relationship ?? [];
   const state = parseRelationshipState(rel);
 
@@ -156,7 +113,7 @@ function renderGenderLine(label, genderKey) {
 }
 
 function renderDynamicFacts(dynamicMemory) {
-  const memory = parseDynamicMemory(dynamicMemory);
+  const memory = normalizeDynamicMemory(dynamicMemory);
   const total =
     (memory.user?.length ?? 0) +
     (memory.ai?.length ?? 0) +

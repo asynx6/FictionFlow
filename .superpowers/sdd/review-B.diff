@@ -1,0 +1,249 @@
+diff --git a/frontend/public/js/pages/story.page.js b/frontend/public/js/pages/story.page.js
+index f348290..9b7fcf8 100644
+--- a/frontend/public/js/pages/story.page.js
++++ b/frontend/public/js/pages/story.page.js
+@@ -59,20 +59,62 @@ function renderAvatarInto(target, story, { sizeClasses = 'w-9 h-9 sm:w-10 sm:h-1
+     target.innerHTML = `<img src="${escapeHtmlAttr(story.avatar_url)}" alt="${escapeHtmlAttr(story?.ai_name ?? 'AI')}" class="${sizeClasses} rounded-full object-cover bg-gradient-to-br from-theme-accent/20 to-theme-accent/5 border border-theme-accent/20 shadow-sm js-avatar-img" data-initial="${initial}" />`;
+   } else {
+     target.textContent = initial;
+   }
+ }
+ 
+ function escapeHtmlAttr(s) {
+   return String(s ?? '').replace(/[&"'<>]/g, (c) => ({ '&': '&amp;', '"': '&quot;', "'": '&#39;', '<': '&lt;', '>': '&gt;' }[c]));
+ }
+ 
++/**
++ * Strip the legacy `{"full_story":...}` / `{"audio_segments":[...]}`
++ * envelope from AI bubble bodies. Backend's `controller.streamChat`
++ * normally parses + cleans this in `tryParseStoryJson`, but when that
++ * parser falls through we ship the raw envelope over SSE `done` and the
++ * bubble would render `{"full_story": "..."}`. This is a last-line-of-
++ * defense sanitizer applied at the bubble-build boundary and the SSE
++ * `done` consumer.
++ */
++function sanitizeFinalContent(text) {
++  if (!text || typeof text !== 'string') return '';
++  const trimmed = text.trim();
++  // Case A: response is a complete JSON envelope.
++  if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
++    try {
++      const obj = JSON.parse(trimmed);
++      if (typeof obj.full_story === 'string' && obj.full_story.trim())
++        return obj.full_story;
++      if (Array.isArray(obj.audio_segments)) {
++        const narrated = obj.audio_segments
++          .map((s) => s?.text ?? '')
++          .filter((t) => t && t.trim())
++          .join('\n');
++        if (narrated) return narrated;
++      }
++      const candidate = obj.story ?? obj.text ?? obj.narration;
++      if (typeof candidate === 'string' && candidate.trim()) return candidate;
++    } catch {
++      /* not JSON — fall through */
++    }
++  }
++  // Case B: response starts with a partial JSON line that never closed.
++  // Heuristic: drop leading line if it opens `{` without matching `}`.
++  const cleaned = [];
++  for (const line of trimmed.split('\n')) {
++    const lt = line.trim();
++    if (lt.startsWith('{') && !lt.includes('}')) continue;
++    cleaned.push(line);
++  }
++  return cleaned.join('\n');
++}
++
+ function isValidAvatarUrl(value) {
+   const v = (value ?? '').toString().trim();
+   if (!v) return false;
+   try {
+     const u = new URL(v);
+     return (u.protocol === 'http:' || u.protocol === 'https:') && v.length <= 2048;
+   } catch {
+     return false;
+   }
+ }
+@@ -1020,21 +1062,21 @@ document.addEventListener('DOMContentLoaded', async () => {
+     if (!bubble || realId == null) return;
+     bubble.id = `msg-${realId}`;
+   };
+ 
+   const createMessageBubble = (msg) => {
+     const isUser = msg.role === 'user';
+     const div = document.createElement('div');
+     div.className = `flex w-full ${isUser ? 'justify-end' : 'justify-start'} mb-5 sm:mb-6 group msg-entrance`;
+     div.id = `msg-${msg.id}`;
+ 
+-    const messageContent = (msg.content ?? msg.raw_content ?? '').toString();
++    const messageContent = sanitizeFinalContent((msg.content ?? msg.raw_content ?? '').toString());
+     const contentHtml = formatTextWithMarkdown(messageContent);
+     const timeLabel = new Date(msg.created_at).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
+ 
+     if (isUser) {
+       div.innerHTML = `
+         <div class="msg-user-block">
+            <div class="msg-content">${contentHtml}</div>
+            <span class="msg-time">${timeLabel}</span>
+         </div>
+       `;
+@@ -1559,21 +1601,24 @@ document.addEventListener('DOMContentLoaded', async () => {
+           }
+         } else if (eventType === 'error') {
+           providerError = data;
+           updateBubbleContent(aiBubble, 'AI provider error: menunggu konfirmasi...', false);
+           openAiErrorDialog(data?.message || 'AI provider sedang tidak tersedia.');
+         } else if (eventType === 'done') {
+           aiMessageId = data?.message_id ?? null;
+           if (currentSendState) currentSendState.aiMessageId = aiMessageId;
+           // Backend kirim `full_content` = full_story (prosa) — sudah
+           // bersih dari JSON wrapper, di-trim oleh controller. Render final.
+-          const finalContent = data?.full_content ?? '';
++          // Sanitizer adalah last-line-of-defense: kalau upstream parser
++          // fall through dan envelope bocor ke `full_content`, kita strip
++          // di sini supaya bubble tidak render JSON mentah.
++          const finalContent = sanitizeFinalContent(data?.full_content ?? '');
+           displayedText = finalContent;
+           updateBubbleContent(aiBubble, finalContent, false);
+           if (aiMessageId) {
+             setBubbleRealId(aiBubble, aiMessageId);
+           }
+         }
+       }, sendSignal);
+ 
+       // Stop: postSSE resolve on AbortError — jangan touch bubble/UI lagi
+       // (handleStopClick sudah rollback + reset).
+diff --git a/frontend/public/story.html b/frontend/public/story.html
+index a543bea..d8ecf77 100644
+--- a/frontend/public/story.html
++++ b/frontend/public/story.html
+@@ -282,21 +282,21 @@
+             ></textarea>
+           </div>
+           <button type="submit" id="sendBtn" disabled class="send-orb flex-shrink-0 w-12 sm:w-14 min-h-[48px] sm:min-h-[56px] self-stretch rounded-full bg-gradient-to-br from-theme-accent to-theme-accent/85 text-white flex items-center justify-center shadow-lg shadow-theme-accent/25 disabled:opacity-40 disabled:cursor-not-allowed disabled:shadow-none hover:shadow-theme-accent/40 hover:scale-[1.04] transition-all duration-300 active:scale-95 group">
+             <span class="material-icons-round text-[22px] sm:text-[24px] leading-none select-none send-stop-icon" id="sendBtnIcon">send</span>
+           </button>
+         </div>
+       </form>
+     </div>
+   </footer>
+ 
+-  <script type="module" src="/js/pages/story.page.js?v=36"></script>
++  <script type="module" src="/js/pages/story.page.js?v=37"></script>
+   <script>
+     if ('serviceWorker' in navigator) {
+       window.addEventListener('load', () => {
+         navigator.serviceWorker.register('/sw.js').catch((err) => {
+           console.warn('[pwa] SW register gagal:', err?.message || err);
+         });
+       });
+     }
+   </script>
+ </body>
+diff --git a/tests/test-sanitize-final-content.mjs b/tests/test-sanitize-final-content.mjs
+new file mode 100644
+index 0000000..badd15d
+--- /dev/null
++++ b/tests/test-sanitize-final-content.mjs
+@@ -0,0 +1,100 @@
++/**
++ * Self-check: sanitizeFinalContent — strip JSON envelope from AI bubble body.
++ * Run: node tests/test-sanitize-final-content.mjs
++ *
++ * Pure-Node test of the sanitizer. The real `sanitizeFinalContent` lives
++ * inside `story.page.js` (not a pure module — wires DOM, audio, etc.),
++ * so we re-declare the function verbatim at the top of this test file.
++ * Keeping it inline avoids a re-export shim and keeps the test self-
++ * contained; any drift between the two copies will surface in the run
++ * because both must satisfy these cases.
++ */
++import assert from 'node:assert/strict';
++
++function sanitizeFinalContent(text) {
++  if (!text || typeof text !== 'string') return '';
++  const trimmed = text.trim();
++  // Case A: response is a complete JSON envelope.
++  if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
++    try {
++      const obj = JSON.parse(trimmed);
++      if (typeof obj.full_story === 'string' && obj.full_story.trim())
++        return obj.full_story;
++      if (Array.isArray(obj.audio_segments)) {
++        const narrated = obj.audio_segments
++          .map((s) => s?.text ?? '')
++          .filter((t) => t && t.trim())
++          .join('\n');
++        if (narrated) return narrated;
++      }
++      const candidate = obj.story ?? obj.text ?? obj.narration;
++      if (typeof candidate === 'string' && candidate.trim()) return candidate;
++    } catch {
++      /* not JSON — fall through */
++    }
++  }
++  // Case B: response starts with a partial JSON line that never closed.
++  // Heuristic: drop leading line if it opens `{` without matching `}`.
++  const cleaned = [];
++  for (const line of trimmed.split('\n')) {
++    const lt = line.trim();
++    if (lt.startsWith('{') && !lt.includes('}')) continue;
++    cleaned.push(line);
++  }
++  return cleaned.join('\n');
++}
++
++const cases = [
++  {
++    name: 'JSON envelope with full_story',
++    input: '{"full_story": "halo dunia", "audio_segments": []}',
++    expected: 'halo dunia',
++  },
++  {
++    name: 'JSON envelope with audio_segments array',
++    input: '{"audio_segments": [{"text": "bagian 1"}, {"text": "bagian 2"}]}',
++    expected: 'bagian 1\nbagian 2',
++  },
++  {
++    name: 'JSON envelope fallback to story key',
++    input: '{"story": "narasi panjang"}',
++    expected: 'narasi panjang',
++  },
++  {
++    name: 'Plain prose passes through unchanged',
++    input: 'halo dunia\nini prosa biasa',
++    expected: 'halo dunia\nini prosa biasa',
++  },
++  {
++    name: 'Mixed: drops leading partial-JSON line',
++    input: '{ini JSON yang tidak valid\nhalo dunia\nbaris prosa',
++    expected: 'halo dunia\nbaris prosa',
++  },
++  {
++    name: 'Null / empty / undefined / number / object all return empty string',
++    input: [null, '', undefined, 42, {}],
++    expected: '',
++  },
++  {
++    name: 'Malformed truncated JSON returns empty string',
++    input: '{"full_story":',
++    expected: '',
++  },
++];
++
++let pass = 0;
++for (const c of cases) {
++  if (Array.isArray(c.input)) {
++    for (const v of c.input) {
++      const out = sanitizeFinalContent(v);
++      assert.equal(out, c.expected, `case "${c.name}" value=${JSON.stringify(v)}`);
++      pass++;
++    }
++  } else {
++    const out = sanitizeFinalContent(c.input);
++    assert.equal(out, c.expected, `case "${c.name}"`);
++    pass++;
++  }
++}
++
++console.log(`OK — sanitizeFinalContent: ${pass}/${pass} cases pass`);

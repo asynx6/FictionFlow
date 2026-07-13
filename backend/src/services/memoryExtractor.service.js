@@ -1,67 +1,17 @@
 import db from '../db/database.js';
 import { chatCompletionOnce, getConfiguredModelId } from './modelProvider.service.js';
+import {
+  TAGGED_KEYS,
+  canonicalizeRelationshipFact,
+  isTaggedFact,
+  taggedKeyOf,
+  normalizeDynamicMemory,
+} from '../util/dynamicMemory.js';
+
+export { normalizeDynamicMemory };
 
 const MAX_DYNAMIC_FACTS_TOTAL = 60;
 const VALID_CATEGORIES = new Set(['user', 'ai', 'world', 'relationship']);
-const TAGGED_KEYS = ['STATUS', 'AI_PANGGILAN', 'USER_PANGGILAN', 'SEJAK', 'KONTEKS_PERILAKU'];
-const TAGGED_KEY_PATTERN = /^\[[A-Z_]+\]:/;
-const TAGGED_KEY_EXTRACT = /^\[([A-Z_]+)\]/;
-
-/**
- * Normalize legacy `dynamic_memory` payloads (old schema = array of
- * `{category,key,value}` objects) into the new categorized-string-array
- * schema `{user:[], ai:[], world:[], relationship:[]}`. Story rows created
- * before the refactor are migrated on the next extraction — values are
- * flattened to bare strings (we don't keep a synthetic key namespace in the
- * new schema).
- *
- * @param {unknown} raw
- * @returns {Record<'user'|'ai'|'world'|'relationship', string[]>}
- */
-export function normalizeDynamicMemory(raw) {
-  const empty = { user: [], ai: [], world: [], relationship: [] };
-  if (!raw) return empty;
-  let parsed;
-  if (typeof raw === 'string') {
-    try { parsed = JSON.parse(raw); } catch { return empty; }
-  } else {
-    parsed = raw;
-  }
-
-  // Already in new schema shape.
-  if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-    const out = { ...empty };
-    for (const cat of VALID_CATEGORIES) {
-      const arr = parsed[cat];
-      if (Array.isArray(arr)) {
-        for (const item of arr) {
-          if (typeof item === 'string' && item.trim()) {
-            out[cat].push(item.trim());
-          }
-        }
-      }
-    }
-    return out;
-  }
-
-  // Legacy schema: array of { category, key, value }.
-  if (Array.isArray(parsed)) {
-    const out = { ...empty };
-    for (const item of parsed) {
-      if (!item || typeof item !== 'object') continue;
-      const cat = VALID_CATEGORIES.has(item.category) ? item.category : 'world';
-      const k = typeof item.key === 'string' ? item.key.trim() : '';
-      const v = typeof item.value === 'string' ? item.value.trim() : '';
-      if (!v) continue;
-      // Slow-leak the old key namespace as a human-readable tag in the new
-      // flat-string format so it doesn't disappear silently.
-      out[cat].push(k ? `${k}: ${v}` : v);
-    }
-    return out;
-  }
-
-  return empty;
-}
 
 /**
  * Total fact count across all four categories.
@@ -173,9 +123,9 @@ export function mergeRelationshipFacts(existing, incoming) {
 
   for (const f of existing || []) {
     if (typeof f !== 'string') continue;
-    if (TAGGED_KEY_PATTERN.test(f)) {
-      const key = f.match(TAGGED_KEY_EXTRACT)?.[1];
-      if (key) tagged.set(key, f);
+    const key = taggedKeyOf(f);
+    if (key) {
+      tagged.set(key, f);
     } else if (f.trim()) {
       narrative.push(f);
     }
@@ -183,9 +133,9 @@ export function mergeRelationshipFacts(existing, incoming) {
 
   for (const f of incoming || []) {
     if (typeof f !== 'string') continue;
-    if (TAGGED_KEY_PATTERN.test(f)) {
-      const key = f.match(TAGGED_KEY_EXTRACT)?.[1];
-      if (key) tagged.set(key, f); // latest wins
+    const key = taggedKeyOf(f);
+    if (key) {
+      tagged.set(key, f); // latest wins
     } else if (f.trim()) {
       const lower = f.toLowerCase();
       const dup = narrative.some((n) => n.toLowerCase() === lower);
@@ -241,8 +191,8 @@ function capMemory(memory) {
 
   // Sort: tagged relationship state first (preserve), narrative last (trim).
   flat.sort((a, b) => {
-    const aIsTagged = a.cat === 'relationship' && TAGGED_KEY_PATTERN.test(a.f) ? 0 : 1;
-    const bIsTagged = b.cat === 'relationship' && TAGGED_KEY_PATTERN.test(b.f) ? 0 : 1;
+    const aIsTagged = a.cat === 'relationship' && isTaggedFact(a.f) ? 0 : 1;
+    const bIsTagged = b.cat === 'relationship' && isTaggedFact(b.f) ? 0 : 1;
     return aIsTagged - bIsTagged;
   });
 
@@ -491,14 +441,14 @@ export async function summarizeFacts(storyId) {
 
     // Always preserve tagged facts in relationship — summarizer MUST NOT lose them.
     const next = { ...normalizeDynamicMemory({ ...memory, ...parsed }) };
-    const existingTagged = memory.relationship.filter((f) => TAGGED_KEY_PATTERN.test(f));
+    const existingTagged = memory.relationship.filter((f) => isTaggedFact(f));
     // Make sure every preserved tagged fact is still present in the merged result.
     const mergedTagged = [...existingTagged, ...next.relationship];
     const seenTaggedKeys = new Set();
     next.relationship = mergedTagged.filter((f) => {
-      if (!TAGGED_KEY_PATTERN.test(f)) return true;
-      const k = f.match(TAGGED_KEY_EXTRACT)?.[1];
-      if (!k || seenTaggedKeys.has(k)) return false;
+      const k = taggedKeyOf(f);
+      if (!k) return true;
+      if (seenTaggedKeys.has(k)) return false;
       seenTaggedKeys.add(k);
       return true;
     });

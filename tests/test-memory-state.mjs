@@ -30,6 +30,8 @@ import {
 } from '../backend/src/services/promptBuilder.service.js';
 
 // ── 1. Legacy schema normalization ──
+// Known tagged keys (here `status`) emit canonical `[KEY]: value` so legacy
+// rows dedup with freshly extracted facts; non-tagged keys keep `KEY: value`.
 {
   const legacy = [
     { category: 'user', key: 'nama', value: 'Beni' },
@@ -39,7 +41,7 @@ import {
   const out = normalizeDynamicMemory(legacy);
   assert.deepEqual(out.user, ['nama: Beni']);
   assert.deepEqual(out.ai, ['panggilan: kak']);
-  assert.deepEqual(out.relationship, ['status: teman']);
+  assert.deepEqual(out.relationship, ['[STATUS]: teman']);
   assert.deepEqual(out.world, []);
 }
 
@@ -159,16 +161,17 @@ import {
   assert.match(block, /Perilakumu HARUS mencerminkan/);
 }
 
-// Legacy payload also works for buildCurrentContextBlock (legacy rows).
+// Legacy payload with a bare tagged key now surfaces as state (TASK-001 fix:
+// tolerant read means bracket-less legacy `status: teman kerja` is read as
+// [STATUS]). Previously the block stayed empty — the BUG-05 symptom.
 {
   const legacyStory = {
     dynamic_memory: JSON.stringify([
-      { category: 'relationship', key: 'status', value: '[STATUS]: teman kerja' },
+      { category: 'relationship', key: 'status', value: 'teman kerja' },
     ]),
   };
   const block = buildCurrentContextBlock(legacyStory);
-  // legacy entry doesn't have `[STATUS]:` prefix in the value — block stays empty.
-  assert.equal(block, '');
+  assert.match(block, /Status hubungan dengan user: teman kerja/);
 }
 
 // ── 7. renderSystemPrompt includes KONTEKS block when present ──

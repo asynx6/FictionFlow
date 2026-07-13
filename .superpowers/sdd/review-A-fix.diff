@@ -1,0 +1,183 @@
+diff --git a/frontend/public/js/api/apiClient.js b/frontend/public/js/api/apiClient.js
+index 7ef7c85..4cd9e8b 100644
+--- a/frontend/public/js/api/apiClient.js
++++ b/frontend/public/js/api/apiClient.js
+@@ -163,22 +163,22 @@ export const apiClient = {
+       const batch = Array.isArray(body?.data?.messages) ? body.data.messages : [];
+       yield batch;
+       if (phase === 'window') {
+         // Single-shot window fetch: regardless of fill, pivot to history
+         // paging immediately. offset jumps to initialWindow so server's
+         // deterministic newest-first ordering is preserved.
+         if (batch.length === 0) return; // empty story — nothing to paginate
+         phase = 'history';
+         offset = initialWindow;
+       } else {
+-        // History phase: short remainder terminates cleanly.
+-        if (batch.length < pageSize) return;
++        // History phase: empty page or short remainder terminates cleanly.
++        if (batch.length === 0 || batch.length < pageSize) return;
+         offset += batch.length;
+       }
+     }
+   },
+   sendMessage: (id, payload, { onEvent, signal } = {}) =>
+     new Promise((resolve, reject) => {
+       fetch(`${BASE}/stories/${id}/messages`, {
+         method: 'POST',
+         headers: { 'Content-Type': 'application/json' },
+         body: JSON.stringify(payload),
+diff --git a/frontend/public/js/pages/story.page.js b/frontend/public/js/pages/story.page.js
+index d83e61b..f348290 100644
+--- a/frontend/public/js/pages/story.page.js
++++ b/frontend/public/js/pages/story.page.js
+@@ -1191,54 +1191,29 @@ document.addEventListener('DOMContentLoaded', async () => {
+       }
+ 
+       // Background warm untuk 3 other voices (tidak blok UI).
+       try {
+         const others = fallbacks.filter((v) => v !== settledVoice);
+         others.forEach((voice, i) => {
+           setTimeout(() => apiClient.warmupTts({ voice }).catch(() => {}), 500 * (i + 1));
+         });
+       } catch (e) { console.warn('[story] warmupTts batch failed:', e.message); }
+ 
+-      // Concurrent fetches: latest window via the iterator's first page,
+-      // plus TTS cache for legacy story info. The iterator handle is kept
+-      // alive so we can drain older pages lazily after first paint.
++      // Pull the initial window via the iterator. The iterator handle is
++      // kept alive so we can drain older pages lazily after first paint.
+       const messagesIter = apiClient.loadAllMessages(storyId, { initialWindow: 12, pageSize: 24 });
+ 
+-      const [initial, ttsRes] = await Promise.allSettled([
+-        messagesIter.next(),
+-        apiClient.get(`/stories/${storyId}/messages/tts-latest`),
+-      ]);
+-
+-      // /tts-latest is informational; segments no longer render.
+-      let ttsByMessageId = {};
+-      if (ttsRes.status === 'fulfilled') {
+-        try {
+-          const allTts = ttsRes.value?.data?.items ?? ttsRes.value?.data ?? [];
+-          if (Array.isArray(allTts)) {
+-            for (const entry of allTts) {
+-              let segs = null;
+-              if (Array.isArray(entry?.segments)) {
+-                segs = entry.segments;
+-              } else if (typeof entry?.segments_json === 'string') {
+-                try { segs = JSON.parse(entry.segments_json); } catch (e) { console.warn('[story] Invalid segments_json for msg', entry?.message_id, e.message); }
+-              }
+-              if (Array.isArray(segs) && segs.length > 0 && entry?.message_id != null) {
+-                ttsByMessageId[entry.message_id] = segs;
+-              }
+-            }
+-            console.log(`[load] /tts-latest populated ${Object.keys(ttsByMessageId).length} messages with TTS segments.`);
+-          }
+-        } catch (err) {
+-          console.warn('[load] /tts-latest fetch gagal:', err?.message);
+-        }
+-      } else {
+-        console.warn('[load] /tts-latest fetch gagal:', ttsRes.reason?.message || ttsRes.reason);
++      let initial;
++      try {
++        initial = { status: 'fulfilled', value: { value: (await messagesIter.next()).value ?? [] } };
++      } catch (err) {
++        initial = { status: 'rejected', reason: err };
+       }
+ 
+       loadingChat?.classList.add('hidden');
+ 
+       // Initial paint: first batch from the iterator (newest items, ≤ initialWindow).
+       if (initial.status === 'fulfilled') {
+         const messages = Array.isArray(initial.value?.value) ? initial.value.value : [];
+         renderMessages(messages);
+       } else {
+         // Initial fetch hard-failed — show empty-state so the user isn't stuck
+@@ -1253,23 +1228,21 @@ document.addEventListener('DOMContentLoaded', async () => {
+       // Lazy older-history pagination. Top progress bar stays visible while we
+       // drain the iterator's remaining pages. Yielding to rAF between each
+       // append keeps the input field responsive — no synchronous UI block.
+       if (initial.status === 'fulfilled') {
+         showProgress(true);
+         (async () => {
+           try {
+             while (true) {
+               const next = await messagesIter.next();
+               if (next.done) break;
+-              const batch = Array.isArray(next.value) ? next.value : [];
+-              if (batch.length === 0) continue;
+-              appendOlderMessages(batch);
++              appendOlderMessages(next.value);
+               // rAF yield: lets the textarea/input + scroll-orbs paint between
+               // pages. Without this, big sessions can jank the messageInput.
+               await new Promise(requestAnimationFrame);
+             }
+           } catch (err) {
+             console.warn('[load] lazy pagination halted:', err?.message || err);
+           } finally {
+             showProgress(false);
+           }
+         })();
+diff --git a/tests/test-pagination-empty-mid-history.mjs b/tests/test-pagination-empty-mid-history.mjs
+new file mode 100644
+index 0000000..e3f5263
+--- /dev/null
++++ b/tests/test-pagination-empty-mid-history.mjs
+@@ -0,0 +1,56 @@
++import assert from 'node:assert/strict';
++import { apiClient } from '../frontend/public/js/api/apiClient.js';
++const { loadAllMessages } = apiClient;
++
++// Regression: server returns [12, 24, 0, ...] — i.e. an empty page after
++// one full history page. Pre-fix the iterator only terminated on a short
++// remainder (batch.length < pageSize), so an empty batch in the middle
++// of history paging produced an infinite loop.
++// Mock fixture:
++//   1. /messages?limit=12          → 12 (initial window, full)
++//   2. /messages?limit=24&offset=12 → 24 (full history page)
++//   3. /messages?limit=24&offset=36 → 0  (empty mid-history → must TERMINATE)
++const calls = [];
++let thirdCalled = false;
++globalThis.fetch = async (url) => {
++  calls.push(url);
++  let count = 0;
++  if (url.includes('offset=36')) {
++    thirdCalled = true;
++    count = 0;
++  } else if (url.includes('offset=12')) {
++    count = 24;
++  } else {
++    count = 12;
++  }
++  const messages = [];
++  for (let i = 0; i < count; i++) {
++    messages.push({ id: calls.length * 100 + i, role: 'assistant', content: `m${i}`, created_at: '2026-07-13' });
++  }
++  return new Response(JSON.stringify({ success: true, data: { messages } }), {
++    headers: { 'content-type': 'application/json' },
++  });
++};
++
++// 200ms ceiling — a regression that loops forever fails fast.
++const RACE_MS = 200;
++const racer = new Promise((_, reject) => setTimeout(() => reject(new Error(`timeout after ${RACE_MS}ms (likely infinite loop)`)), RACE_MS));
++
++const out = await Promise.race([
++  (async () => {
++    const batches = [];
++    for await (const batch of loadAllMessages('s1', { initialWindow: 12, pageSize: 24 })) {
++      batches.push(batch.length);
++    }
++    return batches;
++  })(),
++  racer,
++]);
++
++assert.deepEqual(out, [12, 24, 0], 'expected 3 yields including empty mid-history');
++assert.equal(thirdCalled, true, 'third fetch (empty page) must occur');
++assert.equal(calls.length, 3, 'expected exactly 3 fetches; iterator must not loop forever');
++assert.equal(calls[0], '/api/stories/s1/messages?limit=12');
++assert.equal(calls[1], '/api/stories/s1/messages?limit=24&offset=12');
++assert.equal(calls[2], '/api/stories/s1/messages?limit=24&offset=36');
++console.log('OK — empty mid-history page terminates iterator (no infinite loop)');
+\ No newline at end of file
