@@ -66,6 +66,48 @@ function escapeHtmlAttr(s) {
   return String(s ?? '').replace(/[&"'<>]/g, (c) => ({ '&': '&amp;', '"': '&quot;', "'": '&#39;', '<': '&lt;', '>': '&gt;' }[c]));
 }
 
+/**
+ * Strip the legacy `{"full_story":...}` / `{"audio_segments":[...]}`
+ * envelope from AI bubble bodies. Backend's `controller.streamChat`
+ * normally parses + cleans this in `tryParseStoryJson`, but when that
+ * parser falls through we ship the raw envelope over SSE `done` and the
+ * bubble would render `{"full_story": "..."}`. This is a last-line-of-
+ * defense sanitizer applied at the bubble-build boundary and the SSE
+ * `done` consumer.
+ */
+function sanitizeFinalContent(text) {
+  if (!text || typeof text !== 'string') return '';
+  const trimmed = text.trim();
+  // Case A: response is a complete JSON envelope.
+  if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
+    try {
+      const obj = JSON.parse(trimmed);
+      if (typeof obj.full_story === 'string' && obj.full_story.trim())
+        return obj.full_story;
+      if (Array.isArray(obj.audio_segments)) {
+        const narrated = obj.audio_segments
+          .map((s) => s?.text ?? '')
+          .filter((t) => t && t.trim())
+          .join('\n');
+        if (narrated) return narrated;
+      }
+      const candidate = obj.story ?? obj.text ?? obj.narration;
+      if (typeof candidate === 'string' && candidate.trim()) return candidate;
+    } catch {
+      /* not JSON — fall through */
+    }
+  }
+  // Case B: response starts with a partial JSON line that never closed.
+  // Heuristic: drop leading line if it opens `{` without matching `}`.
+  const cleaned = [];
+  for (const line of trimmed.split('\n')) {
+    const lt = line.trim();
+    if (lt.startsWith('{') && !lt.includes('}')) continue;
+    cleaned.push(line);
+  }
+  return cleaned.join('\n');
+}
+
 function isValidAvatarUrl(value) {
   const v = (value ?? '').toString().trim();
   if (!v) return false;
@@ -1027,7 +1069,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     div.className = `flex w-full ${isUser ? 'justify-end' : 'justify-start'} mb-5 sm:mb-6 group msg-entrance`;
     div.id = `msg-${msg.id}`;
 
-    const messageContent = (msg.content ?? msg.raw_content ?? '').toString();
+    const messageContent = sanitizeFinalContent((msg.content ?? msg.raw_content ?? '').toString());
     const contentHtml = formatTextWithMarkdown(messageContent);
     const timeLabel = new Date(msg.created_at).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
 
@@ -1566,7 +1608,10 @@ document.addEventListener('DOMContentLoaded', async () => {
           if (currentSendState) currentSendState.aiMessageId = aiMessageId;
           // Backend kirim `full_content` = full_story (prosa) — sudah
           // bersih dari JSON wrapper, di-trim oleh controller. Render final.
-          const finalContent = data?.full_content ?? '';
+          // Sanitizer adalah last-line-of-defense: kalau upstream parser
+          // fall through dan envelope bocor ke `full_content`, kita strip
+          // di sini supaya bubble tidak render JSON mentah.
+          const finalContent = sanitizeFinalContent(data?.full_content ?? '');
           displayedText = finalContent;
           updateBubbleContent(aiBubble, finalContent, false);
           if (aiMessageId) {
