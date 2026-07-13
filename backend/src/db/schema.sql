@@ -23,16 +23,23 @@ CREATE TABLE IF NOT EXISTS stories (
     target_ending      TEXT NOT NULL,
 
     -- ====== Dynamic memory (Type 1.5) ======
-    -- JSON array: [{ key, value, category, learned_at }]
-    -- Diisi otomatis oleh memoryExtractor setelah setiap pertukaran chat.
-    -- Diedit/dihapus hanya oleh user (tidak di-override AI).
+    -- JSON {user,ai,world,relationship} (legacy rows may be array of
+    -- {key,value,category}). Diisi otomatis oleh memoryExtractor setelah
+    -- setiap pertukaran chat. Diedit/dihapus hanya oleh user.
     dynamic_memory     TEXT DEFAULT '[]',
+    -- Snapshot dynamic_memory tepat sebelum extractor write terakhir, untuk
+    -- rollback server-side (migration v7). NULL sampai write pertama.
+    memory_prev        TEXT DEFAULT NULL,
 
     -- ====== Preferensi operasional ======
     active_model_id    TEXT NOT NULL DEFAULT 'openrouter/auto',
     short_term_window  INTEGER NOT NULL DEFAULT 4,
     roleplay_mode      TEXT NOT NULL DEFAULT 'default',
     tts_voice          TEXT NOT NULL DEFAULT 'id-ID-ArdiNeural',
+
+    -- ====== Avatar (per-story) ======
+    avatar_url         TEXT,
+    avatar_enabled     INTEGER NOT NULL DEFAULT 0,
 
     -- ====== Preferensi membaca (per-story) ======
     -- font_family: serif|lora|slab|nunito|sans|system (default serif = Crimson Pro)
