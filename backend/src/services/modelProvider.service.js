@@ -216,6 +216,17 @@ async function* streamSingleModel({ modelValue, body, signal }) {
         FIRST_BYTE_TIMEOUT_MS
       );
     } catch (err) {
+      // Caller abort (user Stop / client disconnect): the caller's signal is
+      // aborted. Re-throw an AbortError so shouldTryNextModel sees name ===
+      // 'AbortError' and STOPS the chain instead of retrying the next slot
+      // (TEMUAN-008). This is distinct from an internal first-byte timeout,
+      // which aborts via a separate controller and leaves signal.aborted false
+      // — that stays retryable.
+      if (signal?.aborted) {
+        const abortErr = new Error('aborted by caller');
+        abortErr.name = 'AbortError';
+        throw abortErr;
+      }
       const isTimeout = /timeout|abort/i.test(err.message);
       lastError = new Error(
         `Provider error (${body.model}): ${isTimeout ? `hang/timeout > ${FIRST_BYTE_TIMEOUT_MS}ms` : err.message}`
