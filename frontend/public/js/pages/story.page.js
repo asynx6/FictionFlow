@@ -137,79 +137,168 @@ document.addEventListener('error', (e) => {
 
 /**
  * 1-voice TTS playback. Click a `.tts-play-btn` in any AI bubble: fetch
- * /api/tts with the story's single voice, get back an MP3 blob, play via a
- * single <audio> element. Only one playback at a time — clicking a new
- * bubble while one is playing stops the previous.
+ * /api/tts with the story's single voice, get back an MP3 blob, play via
+ * a shared <audio> element. State machine per button:
  *
- * No gender switching, no multi-segment parser. The whole bubble text is one
- * Edge TTS call.
+ *      idle        -> "volume_up"  -> "Dengarkan (id-ID-ArdiNeural)"
+ *      loading     -> "hourglass_top" spin -> "Memuat audio…"
+ *      playing     -> "stop"          -> "Hentikan"
+ *      paused      -> "play_arrow"    -> "Lanjutkan"
+ *      error toast -> (none)          -> "Audio gagal dimuat: …"
+ *
+ * Only one bubble plays at a time. Clicking another bubble stops the
+ * previous one. Clicking the same bubble mid-play toggles pause/resume.
+ * No gender switching, no segment parser — the whole bubble text is one
+ * Edge TTS call (1 voice per story).
  */
 const _ttsAudio = new Audio();
 let _activeTtsBtn = null;
 
-function _resetTtsBtn() {
-  if (_activeTtsBtn) {
-    _activeTtsBtn.classList.remove('is-tts-active');
-    const icon = _activeTtsBtn.querySelector('.material-icons-round');
-    if (icon) icon.textContent = 'volume_up';
-    _activeTtsBtn = null;
+/**
+ * Show transient non-blocking error toast di top-right — auto-dismiss
+ * ~4s. Used by TTS load failure paths and audio.play() rejection.
+ */
+let _ttsToastTimer = null;
+function showTransientError(text) {
+  let toast = document.getElementById('tts-error-toast');
+  if (!toast) {
+    toast = document.createElement('div');
+    toast.id = 'tts-error-toast';
+    toast.setAttribute('role', 'status');
+    toast.style.cssText = [
+      'position:fixed', 'top:80px', 'right:24px', 'z-index:80',
+      'max-width:340px', 'padding:10px 14px', 'border-radius:12px',
+      'background-color:rgba(220,38,38,0.92)', 'color:#fff',
+      'font-size:13px', 'line-height:1.3',
+      'box-shadow:0 6px 24px rgba(0,0,0,0.25)',
+      'backdrop-filter:blur(6px)',
+      'opacity:0', 'transition:opacity 0.2s ease',
+      'pointer-events:auto',
+    ].join(';');
+    document.body.appendChild(toast);
   }
+  toast.textContent = text;
+  toast.style.opacity = '1';
+  if (_ttsToastTimer) clearTimeout(_ttsToastTimer);
+  _ttsToastTimer = setTimeout(() => {
+    toast.style.opacity = '0';
+  }, 4000);
+}
+
+const _TTS_ICONS = {
+  idle: 'volume_up',
+  loading: 'hourglass_top',
+  playing: 'stop',
+  paused: 'play_arrow',
+};
+const _TTS_TITLES = {
+  idle: 'Dengarkan',
+  loading: 'Memuat audio…',
+  playing: 'Hentikan',
+  paused: 'Lanjutkan',
+};
+
+function _setTtsBtnState(btn, state) {
+  if (!btn) return;
+  btn.setAttribute('data-state', state);
+  const icon = btn.querySelector('.material-icons-round');
+  if (icon) icon.textContent = _TTS_ICONS[state] || _TTS_ICONS.idle;
+  btn.setAttribute('title', _TTS_TITLES[state] || _TTS_TITLES.idle);
+}
+
+function _refreshActiveButton() {
+  if (!_ttsAudio.paused && _ttsAudio.currentTime > 0 && !_ttsAudio.ended) {
+    _setTtsBtnState(_activeTtsBtn, 'playing');
+  } else if (_ttsAudio.paused && _ttsAudio.currentTime > 0) {
+    _setTtsBtnState(_activeTtsBtn, 'paused');
+  } else {
+    _setTtsBtnState(_activeTtsBtn, 'idle');
+  }
+}
+
+function _resetAllTtsBtns() {
+  document.querySelectorAll('.tts-play-btn').forEach((btn) => {
+    _setTtsBtnState(btn, 'idle');
+  });
+  _activeTtsBtn = null;
+}
+
+function _newBlobUrl(blob) {
+  const url = URL.createObjectURL(blob);
+  return url;
 }
 
 function _playBlobAsAudio(blob, btn) {
   // Stop anything currently playing.
-  try {
-    _ttsAudio.pause();
-  } catch {}
-  const url = URL.createObjectURL(blob);
+  try { _ttsAudio.pause(); } catch {}
+  if (_ttsAudio.src && _ttsAudio.src.startsWith('blob:')) {
+    URL.revokeObjectURL(_ttsAudio.src);
+  }
+  const url = _newBlobUrl(blob);
   _ttsAudio.src = url;
+  _activeTtsBtn = btn;
+
   _ttsAudio.onended = () => {
     URL.revokeObjectURL(url);
-    _resetTtsBtn();
+    _resetAllTtsBtns();
   };
   _ttsAudio.onerror = () => {
     URL.revokeObjectURL(url);
-    _resetTtsBtn();
+    showTransientError('Audio gagal diputar.');
+    _resetAllTtsBtns();
   };
-  _resetTtsBtn();
-  _activeTtsBtn = btn;
-  btn.classList.add('is-tts-active');
-  const icon = btn.querySelector('.material-icons-round');
-  if (icon) icon.textContent = 'stop';
+  _setTtsBtnState(btn, 'playing');
   _ttsAudio.play().catch((err) => {
     URL.revokeObjectURL(url);
-    _resetTtsBtn();
     showTransientError(`Audio gagal dimuat: ${err?.message || err}`);
+    _resetAllTtsBtns();
   });
 }
 
 async function _onTtsPlayBtnClick(btn) {
+  const state = btn.getAttribute('data-state') || 'idle';
+
+  // Pause / resume click while this bubble is the active one.
+  if (btn === _activeTtsBtn) {
+    if (state === 'playing') {
+      try { _ttsAudio.pause(); } catch {}
+      _setTtsBtnState(btn, 'paused');
+      return;
+    }
+    if (state === 'paused') {
+      try { await _ttsAudio.play(); } catch (err) {
+        showTransientError(`Audio gagal diputar: ${err?.message || err}`);
+      }
+      _refreshActiveButton();
+      return;
+    }
+  }
+
+  // Switch bubble while another is playing — clear previous state, fetch new.
+  if (_activeTtsBtn && _activeTtsBtn !== btn) {
+    try { _ttsAudio.pause(); } catch {}
+    _resetAllTtsBtns();
+  }
+
   const text = (decodeURIComponent(btn.getAttribute('data-text') || '') || '').trim();
   if (!text) {
-    showTransientError('Tidak ada teks untuk disuarakan.');
+    showTransientError('Pesan ini kosong, tidak ada yang bisa disuarakan.');
     return;
   }
   const story = __currentStoryCache;
   if (!story) {
-    showTransientError('Story belum dimuat.');
+    showTransientError('Cerita belum dimuat. Coba refresh halaman.');
     return;
   }
   const voice = resolveTtsVoice(story);
-  // Toggle: if same bubble is currently playing, stop.
-  if (_activeTtsBtn === btn) {
-    try { _ttsAudio.pause(); } catch {}
-    _resetTtsBtn();
-    return;
-  }
-  // Disable the button while fetch is in flight.
-  btn.disabled = true;
+
+  _setTtsBtnState(btn, 'loading');
   try {
     const blob = await apiClient.synthesizeTts({ text, voice });
     _playBlobAsAudio(blob, btn);
   } catch (err) {
+    _resetAllTtsBtns();
     showTransientError(`Audio gagal dimuat: ${err?.message || err}`);
-  } finally {
-    btn.disabled = false;
   }
 }
 

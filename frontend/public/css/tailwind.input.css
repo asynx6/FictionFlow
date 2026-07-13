@@ -1066,3 +1066,60 @@
     transform: rotate(360deg);
   }
 }
+
+/* ─────────────────────────────────────────────────────────────────
+ * Single-button tts-play-btn per AI bubble (1-voice mode, no segment
+ * toolbar). State machine: idle / loading / playing / paused.
+ * ──────────────────────────────────────────────────────────────── */
+
+.tts-play-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: color 0.18s ease, background-color 0.18s ease, opacity 0.18s ease;
+}
+
+.tts-play-btn:focus-visible {
+  outline: 2px solid rgb(var(--theme-accent));
+  outline-offset: 2px;
+}
+
+.tts-play-btn:hover:not([disabled]):not([data-state="playing"]):not([data-state="paused"]) {
+  color: rgb(var(--theme-accent));
+}
+
+.tts-play-btn[data-state="playing"] {
+  color: rgb(var(--theme-accent));
+  animation: tts-pulse 1.2s ease-in-out infinite;
+}
+
+.tts-play-btn[data-state="loading"] .material-icons-round {
+  animation: spin 1s linear infinite;
+}
+
+.tts-play-btn[data-state="paused"] {
+  color: rgb(var(--theme-accent));
+  opacity: 0.85;
+}
+
+.tts-play-btn[disabled] {
+  cursor: not-allowed;
+  opacity: 0.6;
+  transform: none !important;
+  background-color: transparent !important;
+}
+
+@keyframes tts-pulse {
+  0%, 100% { opacity: 0.55; }
+  50%      { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tts-play-btn[data-state="playing"],
+  .tts-toolbar .animate-spin,
+  .tts-play-btn[data-state="loading"] .material-icons-round {
+    animation: none !important;
+  }
+}
+
