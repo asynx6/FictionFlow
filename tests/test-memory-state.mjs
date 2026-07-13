@@ -154,11 +154,14 @@ import {
   assert.deepEqual(parseRelationshipState([]), {});
 }
 
-// ── 6. buildCurrentContextBlock ──
+// ── 6. buildCurrentContextBlock (ALWAYS emitted) ──
 {
-  // No state → empty string.
+  // No state → block still emitted with fallback directive (BUG-05 fix).
   const story1 = { dynamic_memory: JSON.stringify({ user: ['x'], ai: [], world: [], relationship: [] }) };
-  assert.equal(buildCurrentContextBlock(story1), '');
+  const block1 = buildCurrentContextBlock(story1);
+  assert.match(block1, /## KONTEKS SAAT INI \[BACA INI SEBELUM MEMBALAS\]/);
+  assert.match(block1, /Belum ada state hubungan yang tercatat/);
+  assert.match(block1, /Perilakumu HARUS mencerminkan/);
 
   // With state.
   const story2 = {
@@ -223,6 +226,10 @@ import {
   assert.ok(idxKonteks > 0, 'KONTEKS block must appear in prompt');
   assert.ok(idxDynamic > idxKonteks, 'KONTEKS must appear BEFORE DYNAMIC FACTS');
   assert.match(prompt, /"sayang"/);
+  // TASK-003: tagged facts must NOT reappear as DYNAMIC FACTS bullets.
+  const dynamicSection = prompt.slice(idxDynamic);
+  assert.doesNotMatch(dynamicSection, /\[AI_PANGGILAN\]: sayang/, 'tagged fact not duplicated in DYNAMIC FACTS');
+  assert.doesNotMatch(dynamicSection, /\[KONTEKS_PERILAKU\]:/, 'tagged fact not duplicated in DYNAMIC FACTS');
 }
 
 // renderCasualSystemPrompt also includes the block.

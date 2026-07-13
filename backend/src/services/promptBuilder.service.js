@@ -26,7 +26,7 @@ const GENDER_INSTRUCTIONS = {
   neutral: 'Karakter AI gender-nya netral/ambigu, gunakan panggilan netral saat self-reference.',
 };
 
-import { normalizeDynamicMemory, canonicalizeRelationshipFact, taggedKeyOf } from '../util/dynamicMemory.js';
+import { normalizeDynamicMemory, canonicalizeRelationshipFact, taggedKeyOf, isTaggedFact } from '../util/dynamicMemory.js';
 
 const FACT_CATEGORY_LABELS = {
   user: 'Tentang User',
@@ -55,38 +55,46 @@ export function parseRelationshipState(relationshipFacts = []) {
 
 /**
  * Build the "KONTEKS SAAT INI" prompt block injected between STORY IDENTITY
- * and DYNAMIC FACTS. Returns an empty string when no tagged state is
- * present (legacy stories start with nothing here and the block stays
- * unobtrusive until the extractor populates the first tagged fact).
+ * and DYNAMIC FACTS. ALWAYS emitted — even when no tagged state is recorded
+ * yet — so the AI always has an explicit, binding current-state directive.
+ *
+ * When tagged state is present it is surfaced as structured lines (STATUS,
+ * AI_PANGGILAN, USER_PANGGILAN, KONTEKS_PERILAKU). When absent, a fallback
+ * directive tells the AI not to assume relationship closeness without basis
+ * (fixes BUG-05: previously the whole block was omitted and the AI treated
+ * relationship context as low-salience trivia).
  */
 export function buildCurrentContextBlock(story) {
   const memory = normalizeDynamicMemory(story?.dynamic_memory);
   const rel = memory.relationship ?? [];
   const state = parseRelationshipState(rel);
-
-  if (!state.STATUS && !state.AI_PANGGILAN && !state.KONTEKS_PERILAKU && !state.USER_PANGGILAN) {
-    return '';
-  }
+  const hasState = !!(state.STATUS || state.AI_PANGGILAN || state.KONTEKS_PERILAKU || state.USER_PANGGILAN);
 
   const lines = ['## KONTEKS SAAT INI [BACA INI SEBELUM MEMBALAS]', ''];
 
-  if (state.STATUS) {
-    const sejak = state.SEJAK ? ` (${state.SEJAK})` : '';
-    lines.push(`- Status hubungan dengan user: ${state.STATUS}${sejak}`);
-  }
+  if (!hasState) {
+    lines.push('Belum ada state hubungan yang tercatat di memori.');
+    lines.push('Jika sudah ada interaksi sebelumnya, cek fakta di bagian DYNAMIC FACTS untuk konteks.');
+    lines.push('Jangan membuat asumsi tentang kedekatan atau status hubungan dengan user tanpa dasar.');
+  } else {
+    if (state.STATUS) {
+      const sejak = state.SEJAK ? ` (${state.SEJAK})` : '';
+      lines.push(`- Status hubungan dengan user: ${state.STATUS}${sejak}`);
+    }
 
-  if (state.AI_PANGGILAN) {
-    lines.push(`- Cara kamu memanggil user sekarang: "${state.AI_PANGGILAN}" — gunakan ini secara konsisten.`);
-  }
+    if (state.AI_PANGGILAN) {
+      lines.push(`- Cara kamu memanggil user sekarang: "${state.AI_PANGGILAN}" — gunakan ini secara konsisten.`);
+    }
 
-  if (state.USER_PANGGILAN) {
-    lines.push(`- Cara user memanggil kamu sekarang: "${state.USER_PANGGILAN}" — ini sudah normal, jangan bereaksi aneh atau kaget.`);
-  }
+    if (state.USER_PANGGILAN) {
+      lines.push(`- Cara user memanggil kamu sekarang: "${state.USER_PANGGILAN}" — ini sudah normal, jangan bereaksi aneh atau kaget.`);
+    }
 
-  if (state.KONTEKS_PERILAKU) {
-    lines.push('');
-    lines.push('Panduan perilaku kamu:');
-    lines.push(state.KONTEKS_PERILAKU);
+    if (state.KONTEKS_PERILAKU) {
+      lines.push('');
+      lines.push('Panduan perilaku kamu:');
+      lines.push(state.KONTEKS_PERILAKU);
+    }
   }
 
   lines.push('');
@@ -114,11 +122,17 @@ function renderGenderLine(label, genderKey) {
 
 function renderDynamicFacts(dynamicMemory) {
   const memory = normalizeDynamicMemory(dynamicMemory);
+  // Tagged relationship state is surfaced in the KONTEKS SAAT INI block above;
+  // skip it here to avoid duplicating it as a flat bullet (noise reduction).
+  const narrativeRelationship = (memory.relationship ?? []).filter((f) => !isTaggedFact(f));
+  const perCat = {
+    user: memory.user ?? [],
+    ai: memory.ai ?? [],
+    world: memory.world ?? [],
+    relationship: narrativeRelationship,
+  };
   const total =
-    (memory.user?.length ?? 0) +
-    (memory.ai?.length ?? 0) +
-    (memory.world?.length ?? 0) +
-    (memory.relationship?.length ?? 0);
+    perCat.user.length + perCat.ai.length + perCat.world.length + perCat.relationship.length;
 
   if (total === 0) {
     return '(belum ada fakta terekam — sistem akan menambahnya secara otomatis dari percakapan)';
@@ -126,7 +140,7 @@ function renderDynamicFacts(dynamicMemory) {
 
   const lines = [];
   for (const cat of ['user', 'ai', 'world', 'relationship']) {
-    const items = memory[cat] ?? [];
+    const items = perCat[cat];
     if (items.length === 0) continue;
     lines.push(`  [${FACT_CATEGORY_LABELS[cat]}]`);
     for (const item of items) lines.push(`  - ${item}`);
