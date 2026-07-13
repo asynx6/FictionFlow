@@ -1198,40 +1198,15 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
       } catch (e) { console.warn('[story] warmupTts batch failed:', e.message); }
 
-      // Concurrent fetches: latest window via the iterator's first page,
-      // plus TTS cache for legacy story info. The iterator handle is kept
-      // alive so we can drain older pages lazily after first paint.
+      // Pull the initial window via the iterator. The iterator handle is
+      // kept alive so we can drain older pages lazily after first paint.
       const messagesIter = apiClient.loadAllMessages(storyId, { initialWindow: 12, pageSize: 24 });
 
-      const [initial, ttsRes] = await Promise.allSettled([
-        messagesIter.next(),
-        apiClient.get(`/stories/${storyId}/messages/tts-latest`),
-      ]);
-
-      // /tts-latest is informational; segments no longer render.
-      let ttsByMessageId = {};
-      if (ttsRes.status === 'fulfilled') {
-        try {
-          const allTts = ttsRes.value?.data?.items ?? ttsRes.value?.data ?? [];
-          if (Array.isArray(allTts)) {
-            for (const entry of allTts) {
-              let segs = null;
-              if (Array.isArray(entry?.segments)) {
-                segs = entry.segments;
-              } else if (typeof entry?.segments_json === 'string') {
-                try { segs = JSON.parse(entry.segments_json); } catch (e) { console.warn('[story] Invalid segments_json for msg', entry?.message_id, e.message); }
-              }
-              if (Array.isArray(segs) && segs.length > 0 && entry?.message_id != null) {
-                ttsByMessageId[entry.message_id] = segs;
-              }
-            }
-            console.log(`[load] /tts-latest populated ${Object.keys(ttsByMessageId).length} messages with TTS segments.`);
-          }
-        } catch (err) {
-          console.warn('[load] /tts-latest fetch gagal:', err?.message);
-        }
-      } else {
-        console.warn('[load] /tts-latest fetch gagal:', ttsRes.reason?.message || ttsRes.reason);
+      let initial;
+      try {
+        initial = { status: 'fulfilled', value: { value: (await messagesIter.next()).value ?? [] } };
+      } catch (err) {
+        initial = { status: 'rejected', reason: err };
       }
 
       loadingChat?.classList.add('hidden');
@@ -1260,9 +1235,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             while (true) {
               const next = await messagesIter.next();
               if (next.done) break;
-              const batch = Array.isArray(next.value) ? next.value : [];
-              if (batch.length === 0) continue;
-              appendOlderMessages(batch);
+              appendOlderMessages(next.value);
               // rAF yield: lets the textarea/input + scroll-orbs paint between
               // pages. Without this, big sessions can jank the messageInput.
               await new Promise(requestAnimationFrame);

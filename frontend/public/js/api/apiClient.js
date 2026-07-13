@@ -170,8 +170,8 @@ export const apiClient = {
         phase = 'history';
         offset = initialWindow;
       } else {
-        // History phase: short remainder terminates cleanly.
-        if (batch.length < pageSize) return;
+        // History phase: empty page or short remainder terminates cleanly.
+        if (batch.length === 0 || batch.length < pageSize) return;
         offset += batch.length;
       }
     }
