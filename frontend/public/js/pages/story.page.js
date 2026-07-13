@@ -119,6 +119,90 @@ function isValidAvatarUrl(value) {
   }
 }
 
+/**
+ * Probe + punch the registered service worker to the current build. Reads
+ * `?v=` from the page's <script src="...story.page.js?v=N"> tag as the
+ * baseline and checks the active SW's `scriptURL`. If the SW is stale,
+ * post `{type:'SKIP_WAITING'}` and wait up to `timeoutMs` (default 1s)
+ * for `controllerchange` to fire. Resolves with:
+ *   - 'unsupported' when SW API is absent or no version was found
+ *   - 'current'     when the controller/active SW already matches `?v=N`
+ *   - 'missing'     when there is no registration
+ *   - 'claimed'     when the new SW took over before the timeout
+ * Rejects with `Error('timeout')` when SKIP_WAITING was sent and no
+ * controllerchange arrived within the ceiling — caller fires the toast.
+ *
+ * The timeout is a parameter (default 1000) so the test suite can use a
+ * small value; production callers rely on the default.
+ */
+function probeServiceWorker(currentV, timeoutMs = 1000) {
+  if (!currentV || !('serviceWorker' in navigator)) {
+    return Promise.resolve('unsupported');
+  }
+  return navigator.serviceWorker
+    .getRegistration()
+    .then((reg) => {
+      const ctrl = navigator.serviceWorker.controller;
+      const hasV = (u) => typeof u === 'string' && u.includes(`?v=${currentV}`);
+      if (hasV(reg?.active?.scriptURL) || hasV(ctrl?.scriptURL)) {
+        return 'current';
+      }
+      if (!reg || !reg.active) return 'missing';
+      reg.active.postMessage({ type: 'SKIP_WAITING' });
+      return new Promise((resolve, reject) => {
+        const t = setTimeout(() => reject(new Error('timeout')), timeoutMs);
+        navigator.serviceWorker.addEventListener(
+          'controllerchange',
+          () => { clearTimeout(t); resolve('claimed'); },
+          { once: true }
+        );
+      });
+    });
+}
+
+/**
+ * Read the current page's cache-bust query (e.g. ?v=37) from the
+ * `story.page.js` script tag. Used as the baseline version for
+ * `probeServiceWorker`. Returns null when the param is absent — caller
+ * treats null as 'unsupported' and skips the probe.
+ */
+function _currentSwVersion() {
+  try {
+    const scripts = document.querySelectorAll('script[src]');
+    for (const s of scripts) {
+      const src = s.getAttribute('src') || '';
+      if (src.includes('story.page.js')) {
+        const m = src.match(/[?&]v=(\d+)/);
+        if (m) return m[1];
+      }
+    }
+  } catch { /* ignore */ }
+  return null;
+}
+
+/**
+ * Post-render TTS prewarm. Synthesizes the 3 newest assistant messages
+ * (iterator gives newest-first) so the backend's Edge TTS cache fills
+ * up before the user clicks play. Fire-and-forget; silent on failure.
+ * Uses the same `apiClient.synthesizeTts` as the bubble play button so
+ * the backend cache key matches.
+ */
+async function prewarmLatestAssistantTts(messages, voice) {
+  if (!Array.isArray(messages) || messages.length === 0 || !voice) return;
+  const targets = messages
+    .filter((m) => m && m.role === 'assistant')
+    .slice(0, 3)
+    .map((m) => sanitizeFinalContent((m.content ?? m.raw_content ?? '').toString()))
+    .filter((t) => typeof t === 'string' && t.trim());
+  for (const text of targets) {
+    try {
+      await apiClient.synthesizeTts({ text, voice });
+    } catch {
+      /* silent — best-effort warmup */
+    }
+  }
+}
+
 /** Map pack + gender → EdgeTTS voice_name yang valid. Sumber kebenaran tunggal. */
 function pickEdgeVoiceForSegment(pack, gender) {
   const g = (gender ?? '').toString();
@@ -1115,6 +1199,15 @@ document.addEventListener('DOMContentLoaded', async () => {
       chatProgressBar.classList.toggle('is-loading', !!on);
     };
 
+    // SW boot probe: ensure the controller is the current build before any
+    // network call. Fire-and-forget — does not block paint. Rejection
+    // (timeout) surfaces as a one-shot toast so the user knows first TTS
+    // play may be slower than usual.
+    const currentSwV = _currentSwVersion();
+    void probeServiceWorker(currentSwV).catch(() => {
+      showTransientError('Cache audio tidak aktif — pemutaran pertama mungkin lebih lambat.');
+    });
+
     // Mini helpers extracted from the original render loop. `renderMessages`
     // is a hard reset (used only for the very first paint); `appendOlderMessages`
     // inserts older batches above the current first child without disturbing
@@ -1257,6 +1350,11 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (initial.status === 'fulfilled') {
         const messages = Array.isArray(initial.value?.value) ? initial.value.value : [];
         renderMessages(messages);
+        // Post-render prewarm (fire-and-forget). Defer to the next frame so
+        // the actual paint lands before we kick off TTS synthesis.
+        requestAnimationFrame(() => {
+          void prewarmLatestAssistantTts(messages, settledVoice);
+        });
       } else {
         // Initial fetch hard-failed — show empty-state so the user isn't stuck
         // on the loader forever.
