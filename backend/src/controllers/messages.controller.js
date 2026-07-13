@@ -45,6 +45,26 @@ const insertMessageTtsStmt = db.prepare(`
   INSERT INTO message_tts (message_id, story_id, segments_json, provider)
   VALUES (?, ?, ?, ?)
 `);
+// Orphan user-message cleanup (TASK-011): when a stream ends without an
+// assistant message being saved (client disconnect / Stop before done / empty
+// response / provider error), the user row inserted in POST /messages would
+// otherwise linger unanswered and pollute the context window. Idempotent —
+// no-op if the row was already deleted by a frontend rollback.
+const deleteMessageStmt = db.prepare(`
+  DELETE FROM messages WHERE id = ? AND story_id = ?
+`);
+const deleteMessageTtsByMsgStmt = db.prepare(`
+  DELETE FROM message_tts WHERE message_id = ?
+`);
+function cleanupOrphanUserMessage(userMessageId, storyId) {
+  if (!Number.isInteger(userMessageId) || userMessageId <= 0 || !storyId) return;
+  try {
+    deleteMessageTtsByMsgStmt.run(userMessageId);
+    deleteMessageStmt.run(userMessageId, storyId);
+  } catch (err) {
+    console.warn('[messages] orphan user-message cleanup failed:', err.message);
+  }
+}
 function upsertMessageTts(messageId, storyId, segmentsJson, provider) {
   const tx = db.transaction(() => {
     deleteMessageTtsStmt.run(messageId);
@@ -244,6 +264,11 @@ export async function streamChat({
   });
 
   let accumulator = '';
+  // Tracks whether an assistant message row was committed. On any early exit
+  // (disconnect / Stop / empty / provider error) before this is true, the
+  // orphan user row inserted by POST /messages is cleaned up server-side so
+  // it doesn't linger unanswered (TASK-011 / TEMUAN-055).
+  let assistantSaved = false;
   const abortCtrl = new AbortController();
   const heartbeat = setInterval(() => {
     res.write(':\n\n');
@@ -251,6 +276,10 @@ export async function streamChat({
   res.on('close', () => {
     clearInterval(heartbeat);
     abortCtrl.abort();
+    // Client disconnect mid-stream before assistant saved → remove the orphan
+    // user message. Covers refresh-during-stream (which looks identical to
+    // Stop — both abort). Idempotent vs a frontend rollback that already ran.
+    if (!assistantSaved) cleanupOrphanUserMessage(userMessageId, story.id);
   });
 
   try {
@@ -274,10 +303,12 @@ export async function streamChat({
       // Client disconnected / Stop diklik — jangan simpan partial assistant
       // message (race dengan frontend rollback yang belum punya aiMessageId).
       clearInterval(heartbeat);
+      if (!assistantSaved) cleanupOrphanUserMessage(userMessageId, story.id);
       if (!res.writableEnded) res.end();
       return;
     }
     console.warn('[messages] Provider error:', err.message);
+    if (!assistantSaved) cleanupOrphanUserMessage(userMessageId, story.id);
     sendSse(res, 'error', {
       message: err.message || 'AI provider mengalami gangguan.',
       code: err.code || 'PROVIDER_ERROR',
@@ -288,6 +319,7 @@ export async function streamChat({
   }
 
   if (accumulator.trim().length === 0) {
+    if (!assistantSaved) cleanupOrphanUserMessage(userMessageId, story.id);
     sendSse(res, 'error', {
       message: 'AI tidak mengembalikan balasan (respons kosong).',
       code: 'EMPTY_RESPONSE',
@@ -323,6 +355,7 @@ export async function streamChat({
     estimateTokens(fullStoryText)
   );
   assistantMessageId = Number(ins.lastInsertRowid);
+  assistantSaved = true;
 
   // Audio segments: tidak ada URL MP3 pre-baked.
   // Frontend yang fetch sendiri ke POST /api/tts per segment saat user play.
