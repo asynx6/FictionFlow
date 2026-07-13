@@ -7,9 +7,11 @@
 //   the network, so playback is instant on second click.
 // - Other API calls: network-only (data fresh, SSE stream must not cache).
 //
-// Versi: v3 — bump CACHE_VERSION jika ada breaking change supaya old cache di-purge.
+// Versi: v4 — bump CACHE_VERSION jika ada breaking change supaya old cache di-purge.
+// v4: /api/* GET excluded from SWR (BUG-02 fix); old v3 cache held stale API
+// responses and must be purged.
 
-const CACHE_VERSION = 'fictionflow-v3';
+const CACHE_VERSION = 'fictionflow-v4';
 
 // Generic sha256 hex digest of a UTF-8 string. Runs off the main thread via
 // subtle.digest; passed through to fetch handler via a Promise.
@@ -97,9 +99,11 @@ self.addEventListener('fetch', (event) => {
   // Skip non-GET (POST/PUT/DELETE + SSE) for everything else.
   if (req.method !== 'GET') return;
 
-  // Skip non-TTS SSE stream (e.g. GET /api/stories/.../messages/tts-latest).
-  // Other /api reads are not cached.
-  // (No /api/sse route today; this branch is a deliberate future-proof.)
+  // All /api/* GET reads are network-only: never cache, never SWR. Caching API
+  // reads (stories, messages) served stale responses after refresh and hid
+  // the newest messages until a second refresh (BUG-02). TTS POST is already
+  // handled above; this only affects GET.
+  if (url.pathname.startsWith('/api/')) return;
 
   // Static assets: cache-first.
   if (STATIC_ASSET_PATHS.has(url.pathname)) {
