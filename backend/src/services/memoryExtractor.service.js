@@ -306,11 +306,18 @@ function headTail(text, budget = 2000) {
   return `${s.slice(0, headLen)}[...]${s.slice(-tailLen)}`;
 }
 
-async function callExtractor({ existingMemory, userMessage, assistantMessage }) {
+async function callExtractor({ existingMemory, userMessage, assistantMessage, userName, aiName }) {
+  // Identity guard: the extractor LLM previously guessed who was the user and
+  // who was the AI from the "User: ... AI: ..." turn framing, and stored
+  // swapped name facts (user[] got the AI's name, ai[] got the user's). Inject
+  // the authoritative names from the story row so extraction can't confuse them.
+  const userIdentity = (userName && aiName)
+    ? `\n\n## IDENTITAS PASTI (JANGAN DITUKAR)\nNama USER (manusia yang mengetik): ${userName}\nNama AI/KARAKTER (yang membalas): ${aiName}\nFakta tentang ${userName} → kategori user[]. Fakta tentang ${aiName} → kategori ai[].\nJANGAN pernah menulis "Nama pengguna adalah ${aiName}" atau "Nama AI adalah ${userName}" — itu SALAH.`
+    : '';
   const systemPrompt = FACT_EXTRACTION_SYSTEM_PROMPT
     .replace('{{CURRENT_MEMORY_JSON}}', JSON.stringify(existingMemory, null, 0))
     .replace('{{USER_MESSAGE}}', headTail(userMessage, 2000))
-    .replace('{{AI_REPLY}}', headTail(assistantMessage, 2000));
+    .replace('{{AI_REPLY}}', headTail(assistantMessage, 2000)) + userIdentity;
 
   let raw;
   try {
@@ -333,6 +340,22 @@ async function callExtractor({ existingMemory, userMessage, assistantMessage }) 
   }
   try {
     const out = { user: [], ai: [], world: [], relationship: [] };
+    // Identity guard: drop name facts that contradict the authoritative story
+    // names (e.g. user[] got "Nama pengguna adalah <aiName>"). The prompt
+    // injects the correct names, but defend against an LLM that still swaps.
+    const isWrongNameFact = (cat, fact) => {
+      if (!userName || !aiName) return false;
+      const f = fact.toLowerCase();
+      const userCat = cat === 'user';
+      const m = f.match(/nama (pengguna|user|ai|karakter)(?:\s+ini)?\s+(?:adalah|:)\s*(.+)/);
+      if (!m) return false;
+      const statedName = m[2].trim();
+      const isUserLabel = /pengguna|user/.test(m[1]);
+      // Wrong if a user-category fact claims the AI's name, or vice-versa.
+      if (userCat && isUserLabel && statedName.includes(aiName.toLowerCase())) return true;
+      if (!userCat && !isUserLabel && statedName.includes(userName.toLowerCase())) return true;
+      return false;
+    };
     for (const cat of VALID_CATEGORIES) {
       const arr = parsed[cat];
       if (Array.isArray(arr)) {
@@ -340,6 +363,10 @@ async function callExtractor({ existingMemory, userMessage, assistantMessage }) 
           if (typeof item !== 'string') continue;
           const trimmed = item.trim();
           if (!trimmed) continue;
+          if (isWrongNameFact(cat, trimmed)) {
+            console.warn('[memoryExtractor] drop swapped name fact in', cat, ':', trimmed);
+            continue;
+          }
           // Canonicalize relationship facts so LLM formatting drift (no
           // brackets, lowercase, spaced colon) is normalized before merge.
           out[cat].push(cat === 'relationship' ? canonicalizeRelationshipFact(trimmed) : trimmed);
@@ -409,6 +436,8 @@ export async function extractAndMergeFacts({ story, userMessage, assistantMessag
         existingMemory: baseMemory,
         userMessage,
         assistantMessage,
+        userName: story.user_name,
+        aiName: story.ai_name,
       });
       if (incoming) break;
     } catch (err) {
