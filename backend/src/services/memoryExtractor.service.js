@@ -187,6 +187,46 @@ function dedupNarrative(existing, incoming) {
 }
 
 /**
+ * Drop name facts that contradict the authoritative story names — e.g. a
+ * user-category fact "Nama pengguna adalah <aiName>" left over from before the
+ * extractor identity guard existed. Also rewrites relationship-tagged behavior
+ * facts that referenced the swapped identity (KONTEKS_PERILAKU/STATUS that name
+ * the wrong character as the AI). Returns a cleaned copy.
+ */
+function cleanSwappedNameFacts(memory, userName, aiName) {
+  if (!userName || !aiName) return memory;
+  const u = userName.toLowerCase();
+  const a = aiName.toLowerCase();
+  const isNameFact = (fact) => /nama (pengguna|user|ai|karakter)/i.test(fact);
+  const out = { user: [], ai: [], world: [...memory.world], relationship: [] };
+  for (const f of memory.user || []) {
+    if (typeof f === 'string' && isNameFact(f) && f.toLowerCase().includes(a)) continue;
+    out.user.push(f);
+  }
+  for (const f of memory.ai || []) {
+    if (typeof f === 'string' && isNameFact(f) && f.toLowerCase().includes(u)) continue;
+    out.ai.push(f);
+  }
+  // Re-derive relationship: keep narrative, but drop stale state that was built
+  // on the swapped identity — KONTEKS_PERILAKU/STATUS that framed the USER as
+  // the AI character. The extractor will re-populate them correctly on the next
+  // turn now that the identity guard is in place.
+  const isStaleBehaviorFact = (fact) => {
+    const lower = fact.toLowerCase();
+    // KONTEKS_PERILAKU like "Karakter <userName> sedang pacaran..." — wrong, the
+    // AI character is aiName, not the user.
+    if (lower.startsWith('[konteks_perilaku]:') && lower.includes(`karakter ${u}`)) return true;
+    return false;
+  };
+  for (const f of memory.relationship || []) {
+    if (typeof f !== 'string') { out.relationship.push(f); continue; }
+    if (isStaleBehaviorFact(f)) continue;
+    out.relationship.push(f);
+  }
+  return out;
+}
+
+/**
  * Merge incoming facts (from extractor LLM) into existing categorized memory.
  * Total cap (MAX_DYNAMIC_FACTS_TOTAL) is enforced by global truncation if
  * exceeded; we keep the most recent state facts (relationship tagged first)
@@ -422,7 +462,11 @@ export async function extractAndMergeFacts({ story, userMessage, assistantMessag
   // Snapshot the request-entry memory to feed the (slow) extractor LLM. The
   // actual merge + write re-reads fresh inside the lock so concurrent writers
   // don't clobber each other.
-  const baseMemory = normalizeDynamicMemory(story.dynamic_memory);
+  const baseMemory = cleanSwappedNameFacts(
+    normalizeDynamicMemory(story.dynamic_memory),
+    story.user_name,
+    story.ai_name
+  );
 
   let incoming;
   // Bounded retry with backoff for transient extractor failures (provider
@@ -703,4 +747,5 @@ export const __testing__ = {
   parseMemoryJson,
   headTail,
   normalizeForMatch,
+  cleanSwappedNameFacts,
 };
