@@ -29,9 +29,14 @@ function decorateDialogue(tokens) {
 // the decoration actually runs — previously it called the pre-override bound
 // originalRender and the dialogue styling was dead (TEMUAN-059).
 md.render = function (src, env) {
-  const tokens = md.parse(src ?? '', env);
+  // env MUST be an object — linkify's link rule reads env.references, and
+  // md.parse/renderer.render pass it through. An undefined env crashed the
+  // inline tokenizer with "Cannot read properties of undefined (reading
+  // 'references')" whenever a message contained a URL.
+  const safeEnv = env ?? {};
+  const tokens = md.parse(src ?? '', safeEnv);
   decorateDialogue(tokens);
-  return md.renderer.render(tokens, md.options, env);
+  return md.renderer.render(tokens, md.options, safeEnv);
 };
 
 export function renderMarkdown(text) {

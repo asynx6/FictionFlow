@@ -44,6 +44,11 @@ document.addEventListener('DOMContentLoaded', async () => {
   const userPersonaInput = document.getElementById('userPersona');
   const generateBtn = document.getElementById('generateBtn');
   const aiPromptGenerator = document.getElementById('aiPromptGenerator');
+  // Cached full generator result (set by the generate handler, read by the
+  // create-submit handler) so menu fields not present in the create form
+  // (tts_voice, short_term_window, font_family, font_size) still reach the
+  // backend. Reset to null on each generate.
+  let lastGenerated = null;
 
   // Delete modal elements
   const deleteModal = document.getElementById('deleteModal');
@@ -88,6 +93,10 @@ document.addEventListener('DOMContentLoaded', async () => {
       showError('Tulis prompt dulu untuk generate karakter.');
       return;
     }
+    // Cache the full generator result (including menu fields not in the create
+    // form: tts_voice, short_term_window, font_family, font_size) so the
+    // submit handler can forward them to createStory + apply font via update.
+    lastGenerated = null;
     errorBanner.classList.add('hidden');
     showLoading(true);
 
@@ -99,6 +108,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         return;
       }
       const d = res.data;
+      lastGenerated = d; // cache for submit handler (menu fields not in form)
       if (d.user_name) document.getElementById('userName').value = d.user_name;
       if (d.user_gender) document.getElementById('userGender').value = d.user_gender;
       if (d.user_persona) userPersonaInput.value = d.user_persona;
@@ -106,6 +116,12 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (d.ai_gender) document.getElementById('aiGender').value = d.ai_gender;
       if (d.ai_personality) document.getElementById('aiPersonality').value = d.ai_personality;
       if (d.target_ending) document.getElementById('targetEnding').value = d.target_ending;
+      if (d.roleplay_mode) {
+        const modeSel = document.getElementById('roleplayMode');
+        if (modeSel && Array.from(modeSel.options).some((o) => o.value === d.roleplay_mode)) {
+          modeSel.value = d.roleplay_mode;
+        }
+      }
       if (d.language_style) {
         const known = Array.from(languageStyleSelect.options).some((o) => o.value === d.language_style);
         if (known) {
@@ -392,12 +408,26 @@ document.addEventListener('DOMContentLoaded', async () => {
       roleplay_mode: document.getElementById('roleplayMode').value,
       target_ending: document.getElementById('targetEnding').value.trim() || undefined,
     };
+    // Forward generator-only menu fields if a generation happened this session.
+    if (lastGenerated) {
+      if (lastGenerated.tts_voice) formData.tts_voice = lastGenerated.tts_voice;
+      if (lastGenerated.short_term_window) formData.short_term_window = lastGenerated.short_term_window;
+    }
 
     try {
       const res = await apiClient.post('/stories', formData);
       if (res.success && res.data) {
         const id = res.data.story_id ?? res.data.id ?? res.data.story?.id;
         if (id) {
+          // Apply generator font preferences (not accepted at create) via an
+          // update before navigating. Best-effort; never block navigation.
+          if (lastGenerated && (lastGenerated.font_family || lastGenerated.font_size)) {
+            const patch = {};
+            if (lastGenerated.font_family) patch.font_family = lastGenerated.font_family;
+            if (lastGenerated.font_size) patch.font_size = lastGenerated.font_size;
+            try { await apiClient.put(`/stories/${id}`, patch); } catch { /* non-fatal */ }
+          }
+          lastGenerated = null;
           window.location.href = `/story.html?id=${id}`;
         } else {
           showError('ID cerita tidak ditemukan dari server.');

@@ -303,6 +303,19 @@ let _activeTtsBtn = null;
 let _inflightTtsController = null;
 const TTS_PLAY_TIMEOUT_MS = 12000;
 
+// Incremental chunk-queue playback state. A long message is split into
+// sentence-ish chunks; chunk[0] is synthesized first (short text = fast
+// cold-start, <1s) and played immediately, while chunks[1..] are prefetched
+// in the background so playback continues seamlessly. This avoids waiting
+// for one big synthesis of the whole message before the user hears anything.
+let _ttsChunkQueue = [];        // [{ text, blob, url, status }]
+let _ttsChunkIndex = 0;         // next chunk to play
+let _ttsChunkVoice = null;
+let _ttsChunkMsgId = '';
+let _ttsChunkGroup = null;
+let _ttsPrefetchAbort = null;   // AbortController for background prefetch
+const TTS_CHUNK_MAX_CHARS = 160;
+
 // Module-scope cache: msgId -> {blob, url}. Reusing a cached blob short-
 // circuits the second play to instant (Audio does not refetch). We keep
 // the entry even after playback ends so the user can replay without a
@@ -450,6 +463,152 @@ function _playBlobAsAudio(blob, group, msgId) {
   });
 }
 
+/**
+ * Split text into ~sentence chunks for incremental TTS. Each chunk ≤
+ * TTS_CHUNK_MAX_CHARS; breaks at sentence enders (. ! ? …) or newlines, then
+ * hard-wraps long runs. Short first chunk = fast cold-start (<1s to first
+ * audio) while the rest is prefetched in the background.
+ */
+function _splitTtsChunks(text) {
+  const clean = (text ?? '').replace(/\s+/g, ' ').trim();
+  if (!clean) return [];
+  const out = [];
+  let buf = '';
+  const flush = () => { if (buf.trim()) out.push(buf.trim()); buf = ''; };
+  for (let i = 0; i < clean.length; i++) {
+    buf += clean[i];
+    const ch = clean[i];
+    if ('.!?…'.includes(ch)) {
+      let j = i + 1;
+      while (j < clean.length && '")’”'.includes(clean[j])) { buf += clean[j]; j++; }
+      flush();
+      i = j - 1;
+      continue;
+    }
+    if (clean[i] === '\n') { flush(); continue; }
+    if (buf.length >= TTS_CHUNK_MAX_CHARS) { flush(); }
+  }
+  flush();
+  return out;
+}
+
+/** Stop + tear down any active chunk queue (prefetch + playback). */
+function _stopChunkQueue() {
+  if (_ttsPrefetchAbort) { try { _ttsPrefetchAbort.abort(); } catch {} _ttsPrefetchAbort = null; }
+  for (const c of _ttsChunkQueue) { if (c.url?.startsWith('blob:')) { try { URL.revokeObjectURL(c.url); } catch {} } }
+  _ttsChunkQueue = [];
+  _ttsChunkIndex = 0;
+  _ttsChunkVoice = null;
+  _ttsChunkMsgId = '';
+  _ttsChunkGroup = null;
+}
+
+/** Synthesize one chunk (cache-aware). Returns a Blob or throws. */
+async function _synthChunk(chunkText, voice, signal) {
+  return apiClient.synthesizeTts({ text: chunkText, voice, signal });
+}
+
+/** Background-prefetch upcoming chunks so playback is seamless. */
+function _prefetchNextChunks() {
+  if (!_ttsChunkQueue.length) return;
+  if (_ttsPrefetchAbort) { try { _ttsPrefetchAbort.abort(); } catch {} }
+  _ttsPrefetchAbort = new AbortController();
+  const sig = _ttsPrefetchAbort.signal;
+  (async () => {
+    for (let i = _ttsChunkIndex; i < _ttsChunkQueue.length && i < _ttsChunkIndex + 3; i++) {
+      if (sig.aborted) return;
+      const c = _ttsChunkQueue[i];
+      if (c.status === 'ready' || c.status === 'fetching') continue;
+      c.status = 'fetching';
+      try {
+        const blob = await _synthChunk(c.text, _ttsChunkVoice, sig);
+        if (sig.aborted) return;
+        c.blob = blob;
+        c.url = URL.createObjectURL(blob);
+        c.status = 'ready';
+      } catch (err) {
+        if (sig.aborted) return;
+        c.status = 'error';
+        console.warn('[tts] chunk prefetch fail:', err?.message || err);
+      }
+    }
+  })();
+}
+
+/** Play chunk[index]; on ended, advance + play next (prefetch keeps ahead). */
+function _playChunkAtIndex(index) {
+  if (index < 0 || index >= _ttsChunkQueue.length) { _stopChunkQueue(); _resetAllTtsBtns(); return; }
+  const c = _ttsChunkQueue[index];
+  _ttsChunkIndex = index;
+  if (c.status !== 'ready') {
+    if (_ttsChunkGroup) _setTtsBtnState(_ttsChunkGroup, 'loading');
+    _synthChunk(c.text, _ttsChunkVoice, _ttsPrefetchAbort?.signal)
+      .then((blob) => {
+        if (_ttsChunkIndex !== index) return;
+        c.blob = blob; c.url = URL.createObjectURL(blob); c.status = 'ready';
+        _playChunkAtIndex(index);
+      })
+      .catch((err) => {
+        if (err?.name === 'AbortError') return;
+        showTransientError(`Audio gagal dimuat: ${err?.message || err}`);
+        _stopChunkQueue(); _resetAllTtsBtns();
+      });
+    return;
+  }
+  try { _ttsAudio.pause(); } catch {}
+  if (_ttsAudio.src?.startsWith('blob:')) { try { URL.revokeObjectURL(_ttsAudio.src); } catch {} }
+  _ttsAudio.src = c.url;
+  if (_ttsChunkGroup) { _activeTtsBtn = _ttsChunkGroup; _setTtsBtnState(_ttsChunkGroup, 'playing'); }
+  _ttsAudio.onended = () => {
+    if (c.url?.startsWith('blob:')) { try { URL.revokeObjectURL(c.url); } catch {} c.url = null; }
+    _playChunkAtIndex(index + 1);
+  };
+  _ttsAudio.onerror = () => { showTransientError('Audio gagal diputar.'); _stopChunkQueue(); _resetAllTtsBtns(); };
+  _ttsAudio.play().catch((err) => {
+    if (err?.name === 'AbortError') return;
+    showTransientError(`Audio gagal diputar: ${err?.message || err}`);
+    _stopChunkQueue(); _resetAllTtsBtns();
+  });
+  _prefetchNextChunks();
+}
+
+/**
+ * Start incremental chunk playback. Splits text, synthesizes the FIRST chunk
+ * (short → <1s cold-start), plays it, and prefetches the rest in the
+ * background so the user hears audio almost immediately and remaining chunks
+ * load while the first plays.
+ */
+async function _startChunkPlayback(text, voice, group, msgId) {
+  _stopChunkQueue();
+  const chunks = _splitTtsChunks(text);
+  if (chunks.length === 0) {
+    showTransientError('Pesan ini kosong, tidak ada yang bisa disuarakan.');
+    return;
+  }
+  _ttsChunkQueue = chunks.map((t) => ({ text: t, blob: null, url: null, status: 'pending' }));
+  _ttsChunkIndex = 0;
+  _ttsChunkVoice = voice;
+  _ttsChunkMsgId = msgId;
+  _ttsChunkGroup = group;
+
+  _setTtsBtnState(group, 'loading');
+  const first = _ttsChunkQueue[0];
+  first.status = 'fetching';
+  try {
+    const blob = await _synthChunk(first.text, voice);
+    first.blob = blob;
+    first.url = URL.createObjectURL(blob);
+    first.status = 'ready';
+  } catch (err) {
+    showTransientError(`Audio gagal dimuat: ${err?.message || err}`);
+    _stopChunkQueue();
+    _resetAllTtsBtns();
+    return;
+  }
+  if (_ttsChunkQueue.length === 0) return;
+  _playChunkAtIndex(0);
+}
+
 async function _onTtsPlayOrToggleClick(group) {
   const state = group.getAttribute('data-state') || 'idle';
   const msgId = group.getAttribute('data-msg-id') || '';
@@ -533,48 +692,27 @@ async function _onTtsPlayOrToggleClick(group) {
   }
   const voice = resolveTtsVoice(story);
 
-  _setTtsBtnState(group, 'loading');
-
-  // Abort any previous in-flight play fetch (e.g. user clicked another bubble
-  // while the first was still loading) before starting a new one.
+  // Abort any previous in-flight play fetch + chunk queue before starting.
   if (_inflightTtsController) {
     try { _inflightTtsController.abort(); } catch {}
     _inflightTtsController = null;
   }
-  const controller = new AbortController();
-  _inflightTtsController = controller;
-  const timer = setTimeout(() => {
-    try { controller.abort(); } catch {}
-  }, TTS_PLAY_TIMEOUT_MS);
+  _stopChunkQueue();
 
-  try {
-    const blob = await apiClient.synthesizeTts({ text, voice, signal: controller.signal });
-    clearTimeout(timer);
-    if (_inflightTtsController === controller) _inflightTtsController = null;
-    _playBlobAsAudio(blob, group, msgId);
-  } catch (err) {
-    clearTimeout(timer);
-    if (_inflightTtsController === controller) _inflightTtsController = null;
-    // AbortError = user-induced (stop / play elsewhere / timeout). Don't show
-    // a false-positive 'Audio gagal dimuat' toast for those (trace TTS-013).
-    const aborted = controller.signal.aborted || err?.name === 'AbortError';
-    _resetAllTtsBtns();
-    if (aborted && controller.signal.aborted) {
-      // Timed out (not user-aborted via stop) — surface a recovery hint.
-      showTransientError('Audio gagal dimuat: timeout. Coba play lagi.');
-    } else if (!aborted) {
-      showTransientError(`Audio gagal dimuat: ${err?.message || err}`);
-    }
-  }
+  // Incremental chunk playback: split into sentence chunks, synth + play the
+  // first (short → <1s to first audio), prefetch the rest in the background.
+  // Falls back to a single full synthesis if chunking yields one chunk.
+  await _startChunkPlayback(text, voice, group, msgId);
 }
 
 function _onTtsStopClick(group) {
-  // Abort any in-flight play fetch so a stop during 'loading' cancels the
-  // Edge TTS request, not just resets the button visual.
+  // Abort any in-flight play fetch + chunk-queue prefetch so a stop during
+  // 'loading' cancels the Edge TTS request, not just resets the button visual.
   if (_inflightTtsController) {
     try { _inflightTtsController.abort(); } catch {}
     _inflightTtsController = null;
   }
+  _stopChunkQueue();
   // Stop on the active bubble — pause audio + reset currentTime, group
   // reverts to idle (single play button).
   if (group === _activeTtsBtn) {
@@ -1673,6 +1811,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     scrollToBottom();
 
     let displayedText = '';
+    // Raw token accumulator (the full JSON envelope as it streams in). We keep
+    // this SEPARATE from displayedText because sanitizeFinalContent strips the
+    // envelope — if we re-appended deltas to the already-stripped displayedText,
+    // raw JSON fragments would leak back into the bubble. rawAccum holds the
+    // unmodified stream; displayedText is the sanitized prose derived from it.
+    let rawAccum = '';
     let userMessageId = null;
     let aiMessageId = null;
     let providerError = null;
@@ -1774,15 +1918,15 @@ document.addEventListener('DOMContentLoaded', async () => {
           const delta = data?.delta ?? data?.text ?? '';
           if (!delta) return;
 
-          const accumulated = displayedText + delta;
-          // sanitizeFinalContent strips the JSON envelope { "full_story": ... }
-          // even while it's still streaming in piece by piece — previously we
-          // used finalizeResponse which only drops reasoning tags, so the raw
-          // JSON (`{ "full_story": "Hening sejenak...`) showed in the bubble
-          // until the 'done' event replaced it. Now the bubble only ever shows
-          // prose.
-          const cleaned = sanitizeFinalContent(finalizeResponse(accumulated));
-          if (cleaned.length > displayedText.length) {
+          // Accumulate RAW tokens (full JSON envelope), then sanitize the whole
+          // raw buffer for display. We do NOT append to displayedText directly
+          // — displayedText is the sanitized prose, so appending raw deltas
+          // would re-introduce JSON fragments. sanitizeFinalContent extracts
+          // the in-progress full_story value from the partial envelope so the
+          // bubble only ever shows prose.
+          rawAccum += delta;
+          const cleaned = sanitizeFinalContent(finalizeResponse(rawAccum));
+          if (cleaned !== displayedText) {
             displayedText = cleaned;
             updateBubbleContent(aiBubble, displayedText, false);
             scrollToBottom();
