@@ -97,8 +97,33 @@ function sanitizeFinalContent(text) {
       /* not JSON — fall through */
     }
   }
-  // Case B: response starts with a partial JSON line that never closed.
-  // Heuristic: drop leading line if it opens `{` without matching `}`.
+  // Case B: partial JSON streaming in. The backend streams raw tokens of the
+  // JSON envelope, so mid-stream the bubble sees `{ "full_story": "Hening...`
+  // with no closing brace. Extract the in-progress full_story value so only
+  // prose shows during streaming (raw JSON never visible). Unescape JSON
+  // string escapes that have arrived so far (\n, \", \\).
+  if (trimmed.startsWith('{')) {
+    const m = trimmed.match(/"full_story"\s*:\s*"([\s\S]*)/);
+    if (m) {
+      let val = m[1];
+      // Cut at the closing quote that ends full_story (if it has arrived).
+      // A literal \" inside the story is escaped, so a bare " followed by
+      // , } or whitespace closes the field. Find the first unescaped ".
+      let end = -1;
+      for (let i = 0; i < val.length; i++) {
+        if (val[i] === '\\') { i++; continue; }
+        if (val[i] === '"') { end = i; break; }
+      }
+      if (end >= 0) val = val.slice(0, end);
+      // Unescape what has arrived. Trailing partial escape (odd backslashes
+      // at the very end) is dropped to avoid a dangling backslash.
+      val = val.replace(/\\n/g, '\n').replace(/\\"/g, '"').replace(/\\\\/g, '\\');
+      val = val.replace(/\\+$/, '');
+      return val;
+    }
+  }
+  // Case C: starts with a partial JSON line that never closed and isn't a
+  // recognizable envelope. Drop leading line if it opens `{` without `}`.
   const cleaned = [];
   for (const line of trimmed.split('\n')) {
     const lt = line.trim();
@@ -1750,7 +1775,13 @@ document.addEventListener('DOMContentLoaded', async () => {
           if (!delta) return;
 
           const accumulated = displayedText + delta;
-          const cleaned = finalizeResponse(accumulated);
+          // sanitizeFinalContent strips the JSON envelope { "full_story": ... }
+          // even while it's still streaming in piece by piece — previously we
+          // used finalizeResponse which only drops reasoning tags, so the raw
+          // JSON (`{ "full_story": "Hening sejenak...`) showed in the bubble
+          // until the 'done' event replaced it. Now the bubble only ever shows
+          // prose.
+          const cleaned = sanitizeFinalContent(finalizeResponse(accumulated));
           if (cleaned.length > displayedText.length) {
             displayedText = cleaned;
             updateBubbleContent(aiBubble, displayedText, false);
