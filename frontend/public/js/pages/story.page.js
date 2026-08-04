@@ -810,7 +810,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   const settingsBackdrop = document.getElementById('settingsBackdrop');
   const closeSettingsBtn = document.getElementById('closeSettingsBtn');
   const viewMemoryBtn = document.getElementById('viewMemoryBtn');
+  const viewShortMemoryBtn = document.getElementById('viewShortMemoryBtn');
   const factCountBadge = document.getElementById('factCountBadge');
+  const shortMemoryCountBadge = document.getElementById('shortMemoryCountBadge');
 
   // DOM Elements - Avatar Settings
   const avatarEnabledToggle = document.getElementById('avatarEnabledToggle');
@@ -1127,90 +1129,151 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   }
 
-  const openMemoryModal = async () => {
+  let activeMemoryTab = 'long-term'; // 'long-term' or 'short-term'
+
+  const updateMemoryTabUi = () => {
+    const tabLongTermBtn = document.getElementById('tabLongTermBtn');
+    const tabShortTermBtn = document.getElementById('tabShortTermBtn');
+    const memoryModalTitle = document.getElementById('memoryModalTitle');
+
+    if (activeMemoryTab === 'long-term') {
+      tabLongTermBtn.className = 'px-4 py-2 text-sm font-semibold border-b-2 border-theme-accent text-theme-accent transition-all';
+      tabShortTermBtn.className = 'px-4 py-2 text-sm font-semibold border-b-2 border-transparent text-theme-muted hover:text-theme-text transition-all';
+      memoryModalTitle.innerHTML = `<span class="material-icons-round text-theme-accent">memory</span> Long-Term Memory`;
+    } else {
+      tabLongTermBtn.className = 'px-4 py-2 text-sm font-semibold border-b-2 border-transparent text-theme-muted hover:text-theme-text transition-all';
+      tabShortTermBtn.className = 'px-4 py-2 text-sm font-semibold border-b-2 border-theme-accent text-theme-accent transition-all';
+      memoryModalTitle.innerHTML = `<span class="material-icons-round text-theme-accent">chat_bubble_outline</span> Short-Term Memory`;
+    }
+  };
+
+  const loadMemoryContent = async () => {
+    memoryList.innerHTML = `<div class="flex justify-center p-4"><span class="material-icons-round animate-spin text-theme-accent">autorenew</span></div>`;
+    const escapeHtml2 = (s) => String(s ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#039;');
+
+    if (activeMemoryTab === 'long-term') {
+      try {
+        const res = await apiClient.get(`/stories/${storyId}`);
+        const storyData = res.data?.story ?? res.data;
+        const rawMem = storyData?.dynamic_memory;
+        let parsed;
+        if (rawMem) {
+          if (typeof rawMem === 'string') {
+            try { parsed = JSON.parse(rawMem); } catch { parsed = null; }
+          } else {
+            parsed = rawMem;
+          }
+        }
+
+        const CAT_LABELS = {
+          user: 'User',
+          ai: 'AI',
+          world: 'World',
+          relationship: 'Relationship',
+        };
+
+        let mems = [];
+        if (Array.isArray(parsed)) {
+          mems = parsed;
+        } else if (parsed && !Array.isArray(parsed)) {
+          const flat = [];
+          for (const cat of ['user', 'ai', 'world', 'relationship']) {
+            const arr = parsed[cat];
+            if (Array.isArray(arr)) {
+              for (const value of arr) {
+                if (typeof value === 'string' && value.trim()) {
+                  flat.push({ category: cat, value: value.trim() });
+                }
+              }
+            }
+          }
+          mems = flat;
+        }
+
+        factCountBadge.textContent = `${mems.length} fakta`;
+
+        if (mems.length === 0) {
+          memoryList.innerHTML = `<p class="text-sm text-theme-muted text-center py-6">Belum ada fakta yang diingat AI secara permanen.</p>`;
+        } else {
+          memoryList.innerHTML = mems.map(fact => {
+            const category = CAT_LABELS[fact.category] ?? fact.category ?? 'umum';
+            const key = fact.key ?? '';
+            const value = fact.value ?? fact.fact ?? fact.content ?? '';
+            const learned = fact.learned_at ? new Date(fact.learned_at).toLocaleString('id-ID', { dateStyle: 'short', timeStyle: 'short' }) : '';
+            return `
+              <div class="p-3 bg-theme-bg rounded-xl border border-theme-border/30 mb-2 shadow-sm">
+                <div class="flex justify-between items-start mb-1 gap-2">
+                  <span class="text-xs font-semibold text-theme-accent bg-theme-accent/10 px-2 py-0.5 rounded uppercase tracking-wider truncate">${escapeHtml2(category)}</span>
+                  <span class="text-[10px] text-theme-muted whitespace-nowrap">${learned}</span>
+                </div>
+                ${key ? `<p class="text-[11px] text-theme-muted font-mono mb-1">${escapeHtml2(key)}</p>` : ''}
+                <p class="text-sm text-theme-text mt-1 leading-relaxed">${escapeHtml2(value)}</p>
+              </div>
+            `;
+          }).join('');
+        }
+      } catch (err) {
+        memoryList.innerHTML = `<p class="text-sm text-red-500 text-center py-6">Gagal memuat memori.</p>`;
+      }
+    } else {
+      // Short-term memory: load last short_term_window * 2 messages from DB
+      try {
+        const windowSize = currentStory?.short_term_window ?? 4;
+        const limit = windowSize * 2;
+        const res = await apiClient.get(`/stories/${storyId}/messages?limit=${limit}`);
+        const messages = res.data?.messages ?? res.data ?? [];
+
+        shortMemoryCountBadge.textContent = `${messages.length} pesan`;
+
+        if (messages.length === 0) {
+          memoryList.innerHTML = `<p class="text-sm text-theme-muted text-center py-6">Belum ada percakapan dalam short-term memory.</p>`;
+        } else {
+          let html = `
+            <div class="mb-3 p-3 bg-theme-accent/5 border border-theme-accent/20 rounded-xl text-xs text-theme-accent leading-relaxed">
+              <strong>Info Konteks:</strong> AI membaca ${limit} pesan terakhir berikut secara langsung (real-time) sebagai ingatan jangka pendek ketika kamu mengirim pesan baru.
+            </div>
+          `;
+          html += messages.map(msg => {
+            const isUser = msg.role === 'user';
+            const roleName = isUser ? (currentStory?.user_name ?? 'User') : (currentStory?.ai_name ?? 'AI');
+            const roleClass = isUser ? 'text-blue-500 bg-blue-500/10' : 'text-theme-accent bg-theme-accent/10';
+            const dateStr = msg.created_at ? new Date(msg.created_at).toLocaleString('id-ID', { dateStyle: 'short', timeStyle: 'short' }) : '';
+            const cleanedContent = sanitizeFinalContent(msg.raw_content ?? msg.content ?? '');
+            return `
+              <div class="p-3 bg-theme-bg rounded-xl border border-theme-border/30 mb-2 shadow-sm">
+                <div class="flex justify-between items-start mb-1 gap-2">
+                  <span class="text-xs font-semibold px-2 py-0.5 rounded uppercase tracking-wider truncate ${roleClass}">${escapeHtml2(roleName)}</span>
+                  <span class="text-[10px] text-theme-muted whitespace-nowrap">${dateStr}</span>
+                </div>
+                <p class="text-sm text-theme-text mt-1 leading-relaxed whitespace-pre-wrap">${escapeHtml2(cleanedContent)}</p>
+              </div>
+            `;
+          }).join('');
+          memoryList.innerHTML = html;
+        }
+      } catch (err) {
+        memoryList.innerHTML = `<p class="text-sm text-red-500 text-center py-6">Gagal memuat short-term memory.</p>`;
+      }
+    }
+  };
+
+  const openMemoryModal = async (defaultTab = 'long-term') => {
     closeSettings();
+    activeMemoryTab = typeof defaultTab === 'string' ? defaultTab : 'long-term';
+    updateMemoryTabUi();
+
     memoryModal.classList.remove('hidden');
     setTimeout(() => {
       memoryDialog.classList.remove('scale-95', 'opacity-0');
       memoryDialog.classList.add('scale-100', 'opacity-100');
     }, 10);
 
-    memoryList.innerHTML = `<div class="flex justify-center p-4"><span class="material-icons-round animate-spin text-theme-accent">autorenew</span></div>`;
-
-    try {
-      const res = await apiClient.get(`/stories/${storyId}`);
-      const storyData = res.data?.story ?? res.data;
-
-      // dynamic_memory supports two shapes (legacy + new). Normalize to a
-      // flat list of `{category, value, ...}` for rendering.
-      const rawMem = storyData?.dynamic_memory;
-      let parsed;
-      if (rawMem) {
-        if (typeof rawMem === 'string') {
-          try { parsed = JSON.parse(rawMem); } catch { parsed = null; }
-        } else {
-          parsed = rawMem;
-        }
-      }
-
-      const CAT_LABELS = {
-        user: 'User',
-        ai: 'AI',
-        world: 'World',
-        relationship: 'Relationship',
-      };
-
-      let mems = [];
-      if (Array.isArray(parsed)) {
-        // Legacy: [{category, key, value, learned_at}]
-        mems = parsed;
-      } else if (parsed && !Array.isArray(parsed)) {
-        // New: {user, ai, world, relationship} — flatten.
-        const flat = [];
-        for (const cat of ['user', 'ai', 'world', 'relationship']) {
-          const arr = parsed[cat];
-          if (Array.isArray(arr)) {
-            for (const value of arr) {
-              if (typeof value === 'string' && value.trim()) {
-                flat.push({ category: cat, value: value.trim() });
-              }
-            }
-          }
-        }
-        mems = flat;
-      }
-
-      factCountBadge.textContent = `${mems.length} fakta`;
-
-      if (mems.length === 0) {
-        memoryList.innerHTML = `<p class="text-sm text-theme-muted text-center py-6">Belum ada fakta yang diingat AI.</p>`;
-      } else {
-        const escapeHtml2 = (s) => String(s ?? '')
-          .replace(/&/g, '&amp;')
-          .replace(/</g, '&lt;')
-          .replace(/>/g, '&gt;')
-          .replace(/"/g, '&quot;')
-          .replace(/'/g, '&#039;');
-        memoryList.innerHTML = mems.map(fact => {
-          const category = CAT_LABELS[fact.category] ?? fact.category ?? 'umum';
-          const key = fact.key ?? '';
-          const value = fact.value ?? fact.fact ?? fact.content ?? '';
-          const learned = fact.learned_at ? new Date(fact.learned_at).toLocaleString('id-ID', { dateStyle: 'short', timeStyle: 'short' }) : '';
-          return `
-            <div class="p-3 bg-theme-bg rounded-xl border border-theme-border/30 mb-2 shadow-sm">
-              <div class="flex justify-between items-start mb-1 gap-2">
-                <span class="text-xs font-semibold text-theme-accent bg-theme-accent/10 px-2 py-0.5 rounded uppercase tracking-wider truncate">${escapeHtml2(category)}</span>
-                <span class="text-[10px] text-theme-muted whitespace-nowrap">${learned}</span>
-              </div>
-              ${key ? `<p class="text-[11px] text-theme-muted font-mono mb-1">${escapeHtml2(key)}</p>` : ''}
-              <p class="text-sm text-theme-text mt-1 leading-relaxed">${escapeHtml2(value)}</p>
-            </div>
-          `;
-        }).join('');
-      }
-    } catch (err) {
-      memoryList.innerHTML = `<p class="text-sm text-red-500 text-center py-6">Gagal memuat memori.</p>`;
-    }
+    await loadMemoryContent();
   };
 
   const closeMemoryWindow = () => {
@@ -1221,7 +1284,30 @@ document.addEventListener('DOMContentLoaded', async () => {
     }, 200);
   };
 
-  if (viewMemoryBtn) viewMemoryBtn.addEventListener('click', openMemoryModal);
+  if (viewMemoryBtn) viewMemoryBtn.addEventListener('click', () => openMemoryModal('long-term'));
+  if (viewShortMemoryBtn) viewShortMemoryBtn.addEventListener('click', () => openMemoryModal('short-term'));
+
+  const tabLongTermBtn = document.getElementById('tabLongTermBtn');
+  const tabShortTermBtn = document.getElementById('tabShortTermBtn');
+  if (tabLongTermBtn) {
+    tabLongTermBtn.addEventListener('click', () => {
+      if (activeMemoryTab !== 'long-term') {
+        activeMemoryTab = 'long-term';
+        updateMemoryTabUi();
+        loadMemoryContent();
+      }
+    });
+  }
+  if (tabShortTermBtn) {
+    tabShortTermBtn.addEventListener('click', () => {
+      if (activeMemoryTab !== 'short-term') {
+        activeMemoryTab = 'short-term';
+        updateMemoryTabUi();
+        loadMemoryContent();
+      }
+    });
+  }
+
   if (closeMemoryBtn) closeMemoryBtn.addEventListener('click', closeMemoryWindow);
   if (memoryBackdrop) memoryBackdrop.addEventListener('click', closeMemoryWindow);
 
@@ -1510,6 +1596,12 @@ document.addEventListener('DOMContentLoaded', async () => {
       const dynamicMem = currentStory.dynamic_memory;
       if (dynamicMem) {
         factCountBadge.textContent = `${countFacts(dynamicMem)} fakta`;
+      }
+
+      // Initial estimate of short-term memory message count
+      const windowSize = currentStory?.short_term_window ?? 4;
+      if (shortMemoryCountBadge) {
+        shortMemoryCountBadge.textContent = `maks ${windowSize * 2} pesan`;
       }
 
       // Voice dropdown di-populate dari currentStory.tts_voice (sumber kebenaran

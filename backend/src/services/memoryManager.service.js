@@ -10,7 +10,7 @@ const getRecentStmt = db.prepare(`
 `);
 
 const MIN_WINDOW = 3;
-const MAX_WINDOW = 5;
+const MAX_WINDOW = 12;
 
 function clampWindow(value, fallback) {
   const n = Number.parseInt(value ?? '', 10);

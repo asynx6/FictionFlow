@@ -107,15 +107,27 @@
       <div class="p-4 overflow-y-auto flex-1 space-y-6">
         <div class="settings-section space-y-2">
           <h3 class="text-xs font-bold uppercase tracking-wider text-theme-muted">Memory System</h3>
-          <div class="surface-panel rounded-xl p-4">
-            <div class="flex items-center justify-between mb-2">
-              <span class="text-sm font-semibold">Fakta Dinamis</span>
-              <span class="text-xs font-mono bg-theme-hover px-2 py-1 rounded" id="factCountBadge">0 fakta</span>
+          <div class="surface-panel rounded-xl p-4 space-y-4">
+            <div>
+              <div class="flex items-center justify-between mb-2">
+                <span class="text-sm font-semibold">Long-Term Memory</span>
+                <span class="text-xs font-mono bg-theme-hover px-2 py-1 rounded" id="factCountBadge">0 fakta</span>
+              </div>
+              <p class="text-[10px] text-theme-muted mb-3">Fakta penting (identitas, hubungan, sejarah) yang diingat AI secara permanen.</p>
+              <button id="viewMemoryBtn" class="w-full py-1.5 px-3 rounded-lg bg-theme-hover text-sm font-medium hover:bg-theme-accent hover:text-white transition-colors">
+                Lihat Long-Term Memory
+              </button>
             </div>
-            <p class="text-xs text-theme-muted mb-3">AI mengingat secara otomatis dari percakapan.</p>
-            <button id="viewMemoryBtn" class="w-full py-1.5 px-3 rounded-lg bg-theme-hover text-sm font-medium hover:bg-theme-accent hover:text-white transition-colors">
-              Lihat Memory
-            </button>
+            <div class="border-t border-theme-border/30 pt-3">
+              <div class="flex items-center justify-between mb-2">
+                <span class="text-sm font-semibold">Short-Term Memory</span>
+                <span class="text-xs font-mono bg-theme-hover px-2 py-1 rounded" id="shortMemoryCountBadge">0 pesan</span>
+              </div>
+              <p class="text-[10px] text-theme-muted mb-3">Pesan-pesan aktif terdekat yang dibaca langsung sebagai konteks oleh AI.</p>
+              <button id="viewShortMemoryBtn" class="w-full py-1.5 px-3 rounded-lg bg-theme-hover text-sm font-medium hover:bg-theme-accent hover:text-white transition-colors">
+                Lihat Short-Term Memory
+              </button>
+            </div>
           </div>
         </div>
         <div class="settings-section space-y-2">
@@ -211,14 +223,25 @@
   <div id="memoryModal" class="fixed inset-0 z-[60] hidden flex items-center justify-center p-4">
     <div class="absolute inset-0 bg-black/60 backdrop-blur-sm" id="memoryBackdrop"></div>
     <div class="relative bg-theme-surface rounded-2xl border border-theme-border/50 shadow-2xl w-full max-w-2xl max-h-[85vh] flex flex-col scale-95 opacity-0 transition-all duration-200" id="memoryDialog">
-      <div class="p-4 border-b border-theme-border/50 flex items-center justify-between">
-        <h2 class="text-lg font-bold flex items-center gap-2">
-          <span class="material-icons-round text-theme-accent">memory</span>
-          Long-Term Memory
-        </h2>
-        <button id="closeMemoryBtn" class="p-2 rounded-full hover:bg-theme-hover transition-colors" aria-label="Tutup">
-          <span class="material-icons-round">close</span>
-        </button>
+      <div class="p-4 border-b border-theme-border/50 flex flex-col gap-3">
+        <div class="flex items-center justify-between">
+          <h2 id="memoryModalTitle" class="text-lg font-bold flex items-center gap-2">
+            <span class="material-icons-round text-theme-accent">memory</span>
+            Long-Term Memory
+          </h2>
+          <button id="closeMemoryBtn" class="p-2 rounded-full hover:bg-theme-hover transition-colors" aria-label="Tutup">
+            <span class="material-icons-round">close</span>
+          </button>
+        </div>
+        <!-- Modal Tabs -->
+        <div class="flex border-b border-theme-border/20">
+          <button id="tabLongTermBtn" class="px-4 py-2 text-sm font-semibold border-b-2 border-theme-accent text-theme-accent transition-all">
+            Long-Term Facts
+          </button>
+          <button id="tabShortTermBtn" class="px-4 py-2 text-sm font-semibold border-b-2 border-transparent text-theme-muted hover:text-theme-text transition-all">
+            Short-Term Messages
+          </button>
+        </div>
       </div>
       <div class="p-4 overflow-y-auto flex-1 bg-theme-hover/30">
         <div id="memoryList" class="space-y-2"></div>
