@@ -103,7 +103,7 @@ const STORY_FIELD_MAX_LENGTH = {
 function clampWindow(value) {
   const n = Number.parseInt(value ?? '', 10);
   if (Number.isNaN(n)) return env.DEFAULT_SHORT_TERM_WINDOW;
-  return Math.min(5, Math.max(3, n));
+  return Math.min(12, Math.max(3, n));
 }
 
 // Avatar URL: harus http/https, max 2048 char, tidak boleh ada karakter

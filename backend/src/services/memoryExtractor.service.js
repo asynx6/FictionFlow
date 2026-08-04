@@ -119,9 +119,14 @@ const FACT_EXTRACTION_SYSTEM_PROMPT = [
   '- Jika fakta sudah ada di memori, jangan tambah ulang.',
   '- Pertahankan versi yang paling spesifik, hapus yang samar/duplikat.',
   '- Hanya tambah fakta baru jika memang menambah informasi yang belum ada.',
+  '- UTAMAKAN mengekstrak identitas keluarga atau orang terdekat yang disebutkan (misal: "Nama ayah user adalah [Nama]", "Adik AI bernama [Nama]", dsb.) ke kategori user[] atau ai[] sesuai subjeknya.',
+  '- UTAMAKAN mengekstrak sejarah hubungan atau kronologi peristiwa penting (misal: "Dulu berpacaran, sempat putus karena kesalahpahaman, kini kembali bersama").',
+  '- CATAT perubahan sifat atau dinamika perilaku akibat kejadian penting (misal: "Kini AI bersikap lebih protektif dan manja setelah balikan").',
   '',
   '### Jangan ekstrak',
-  '- Obrolan basa-basi',
+  '- Obrolan basa-basi atau kejadian mikro sesaat/episodik (transient/micro-events) yang tidak penting bagi sejarah struktural jangka panjang.',
+  '- JANGAN PERNAH mengekstrak aksi fisik temporal, adegan mikro sekilas, atau tindakan sementara dari satu adegan spesifik (misalnya: "Beni memesan ojol untuk pulang", "Sei memeluk ibunya erat di depan gerbang", "Ibu membimbing Sei masuk rumah", "Beni berjalan kaki tengah malam", dsb.). Kejadian kecil ini hanya akan memenuhi ruang memori secara sia-sia.',
+  '- Ingat: manusia normal melupakan detail aksi kecil dalam hitungan menit. Hanya ekstrak esensi struktural makro: peran keluarga/sosial (siapa adalah siapa), identitas, rahasia besar, status hubungan jangka panjang, atau keputusan hidup besar yang merubah arah hidup.',
   '- Fakta yang sudah terwakili dengan baik di memori saat ini',
   '- Spekulasi yang tidak didukung percakapan ini',
   '',
@@ -560,7 +565,8 @@ const AUDITOR_SYSTEM_PROMPT = [
   '',
   'JANGAN hapus:',
   '- Tagged fact di relationship (state sekarang)',
-  '- Identitas permanen (nama user/ai, gender, kepribadian inti)',
+  '- Identitas permanen (nama user/ai, gender, kepribadian inti, hubungan keluarga seperti nama ayah, ibu, adik, atau kakak)',
+  '- Sejarah hubungan kronologis yang menunjukkan transisi status (misal: "Dulu pernah putus, sekarang kembali bersama" bukan konflik dengan "Dulu berpacaran"). Fakta kronologis yang menunjukkan transisi perjalanan hubungan HARUS dipertahankan sebagai bagian dari sejarah cerita.',
   '- Fakta yang baru saja ditambahkan',
   '',
   'Output HANYA JSON object:',
@@ -657,7 +663,7 @@ export async function callMemoryAuditor(storyId) {
 
 const SUMMARIZER_SYSTEM_PROMPT = [
   'Kamu adalah Memory Summarizer untuk aplikasi roleplay.',
-  'Tugasmu: merangkum dynamic_memory sebuah story menjadi versi lebih ringkas.',
+  'Tugasmu: merangkum dynamic_memory sebuah story menjadi versi lebih ringkas tanpa kehilangan inti cerita.',
   '',
   'Diberi JSON dengan 4 kategori (user, ai, world, relationship).',
   'Tiap kategori berisi array of string (termasuk tagged facts di relationship).',
@@ -666,7 +672,7 @@ const SUMMARIZER_SYSTEM_PROMPT = [
   '- Pertahankan SEMUA tagged fact di relationship ([STATUS], [AI_PANGGILAN], ',
   '  [USER_PANGGILAN], [SEJAK], [KONTEKS_PERILAKU]).',
   '- Buang fakta narrative yang redundan atau trivial.',
-  '- Pertahankan fakta PALING PENTING (identitas, hubungan, event krusial, lokasi).',
+  '- WAJIB mempertahankan fakta paling penting yang permanen seperti identitas inti (nama asli, gender, sifat bawaan), rahasia besar, atau plot poin utama cerita yang sedang berjalan.',
   '- Output JSON object dengan 4 kategori yang sama.',
   '',
   'Format:',
@@ -714,13 +720,14 @@ export async function summarizeFacts(storyId) {
       const latestRaw = row?.dynamic_memory ?? dynamicRaw;
       const latest = normalizeDynamicMemory(latestRaw);
       const parsedNorm = normalizeDynamicMemory(parsed);
-      // MERGE (not replace) so narrative facts the summarizer LLM omitted are
-      // not permanently lost (TEMUAN-020). Relationship uses mergeRelationshipFacts
-      // (tagged latest-wins + narrative dedup); other categories use dedupNarrative.
+      // REPLACE (not merge) narrative facts for user, ai, world categories so that
+      // old summarized facts are actually discarded and memory doesn't stack/bloat.
+      // (TEMUAN-020: Relationship category uses mergeRelationshipFacts so tagged
+      // state latest-wins is preserved, while narrative categories are replaced).
       const next = {
-        user: dedupNarrative(latest.user, parsedNorm.user),
-        ai: dedupNarrative(latest.ai, parsedNorm.ai),
-        world: dedupNarrative(latest.world, parsedNorm.world),
+        user: parsedNorm.user,
+        ai: parsedNorm.ai,
+        world: parsedNorm.world,
         relationship: mergeRelationshipFacts(latest.relationship, parsedNorm.relationship),
       };
       // Re-apply cap so a merge that grew past the cap still trims oldest
