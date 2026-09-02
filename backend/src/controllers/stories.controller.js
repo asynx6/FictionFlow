@@ -205,7 +205,9 @@ export function createStory(req, res) {
     ai_gender: aiGender,
     ai_personality: req.body.ai_personality.trim(),
     language_style: req.body.language_style,
-    target_ending: req.body.target_ending?.toString().trim() || null,
+    // Optional field — '' instead of null so it satisfies the NOT NULL
+    // column while staying absent from the prompt (promptBuilder masks it).
+    target_ending: (req.body.target_ending?.toString().trim() || ''),
     // Provider model is fixed by .env — column kept in schema for back-compat
     // but backend always uses env.DEFAULT_MODEL_ID regardless.
     active_model_id: env.DEFAULT_MODEL_ID,

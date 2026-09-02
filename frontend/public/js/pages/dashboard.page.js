@@ -1,6 +1,23 @@
 import { apiClient } from '../api/apiClient.js';
 import { themeManager } from '../core/themeManager.js';
 
+// Display labels for stored enum values (create-form option values).
+// Fall back to raw value for legacy rows storing the label itself.
+function labelFor(map, value) {
+  return map[value] ?? value;
+}
+
+const GENDER_LABELS = { male: 'Laki-laki', female: 'Perempuan', neutral: 'Netral' };
+const LANGUAGE_STYLE_LABELS = {
+  santai: 'Santai & Asik',
+  ceplas_ceplos: 'Blak-blakan & To the point',
+  absurd: 'Kocak & Absurd',
+  kasar_imut: 'Kasar tapi Imut (Tsundere)',
+  profesional: 'Profesional & Sopan',
+};
+
+const GENDER_ICONS = { male: 'male', female: 'female', neutral: 'person' };
+
 document.addEventListener('error', (e) => {
   const img = e.target;
   if (!img?.classList?.contains('js-avatar-img')) return;
@@ -325,6 +342,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         const parsedDate = new Date(story.updated_at);
         const timeLabel = formatRelativeDate(parsedDate);
         const userGender = story.user_gender ?? 'neutral';
+        const aiGender = story.ai_gender ?? 'neutral';
         const aiPersonality = (story.ai_personality ?? '').trim() || 'Tidak ada deskripsi';
         const languageStyle = (story.language_style ?? 'custom').trim();
         const userName = (story.user_name ?? 'Kamu').trim();
@@ -346,15 +364,15 @@ document.addEventListener('DOMContentLoaded', async () => {
                 <div class="flex flex-wrap items-center gap-2">
                   <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-theme-accent/10 text-theme-accent border border-theme-accent/10">
                     <span class="material-icons-round text-[12px]">style</span>
-                    <span class="capitalize">${languageStyle}</span>
+                    <span>${labelFor(LANGUAGE_STYLE_LABELS, languageStyle)}</span>
                   </span>
                   <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-theme-hover text-theme-muted border border-theme-border/50">
-                    <span class="material-icons-round text-[12px]">${story.ai_gender === 'female' ? 'female' : 'male'}</span>
-                    <span>AI ${story.ai_gender ?? 'neutral'}</span>
+                    <span class="material-icons-round text-[12px]">${GENDER_ICONS[aiGender] ?? 'person'}</span>
+                    <span>AI ${labelFor(GENDER_LABELS, aiGender)}</span>
                   </span>
                   <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-theme-hover text-theme-muted border border-theme-border/50">
-                    <span class="material-icons-round text-[12px]">${userGender === 'female' ? 'female' : 'male'}</span>
-                    <span>User ${userGender}</span>
+                    <span class="material-icons-round text-[12px]">${GENDER_ICONS[userGender] ?? 'person'}</span>
+                    <span>User ${labelFor(GENDER_LABELS, userGender)}</span>
                   </span>
                 </div>
               </div>
