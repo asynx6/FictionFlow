@@ -20,7 +20,7 @@ CREATE TABLE IF NOT EXISTS stories (
     ai_gender          TEXT DEFAULT 'neutral',
     ai_personality     TEXT NOT NULL,
     language_style     TEXT NOT NULL,
-    target_ending      TEXT NOT NULL,
+    target_ending      TEXT NOT NULL DEFAULT '',
 
     -- ====== Dynamic memory (Type 1.5) ======
     -- JSON {user,ai,world,relationship} (legacy rows may be array of
