@@ -30,6 +30,16 @@ const FONT_SIZE_MAP = {
   22: 'font-size-3xl',
 };
 
+// Display labels for stored language_style enum values (create-form option
+// values). Fall back to raw value for custom styles / legacy label rows.
+const LANGUAGE_STYLE_LABELS = {
+  santai: 'Santai & Asik',
+  ceplas_ceplos: 'Blak-blakan & To the point',
+  absurd: 'Kocak & Absurd',
+  kasar_imut: 'Kasar tapi Imut (Tsundere)',
+  profesional: 'Profesional & Sopan',
+};
+
 // TTS playback + per-segment gender switching was removed. Each story
 // picks one voice (story.tts_voice) and the AI emits plain prose; the
 // /api/tts route and the audio_segments path are also gone. audio_segments
@@ -1576,7 +1586,11 @@ document.addEventListener('DOMContentLoaded', async () => {
       headerAiName.textContent = currentStory.ai_name;
       renderAvatarInto(headerAvatar, currentStory);
       const modeLabel = (currentStory.roleplay_mode ?? 'default') === 'casual' ? 'Casual' : 'Default';
-      headerContext.textContent = `Roleplay dengan ${currentStory.ai_name} (${currentStory.language_style ?? ''} \u00b7 ${modeLabel})`.trim();
+      const styleLabel = LANGUAGE_STYLE_LABELS[currentStory.language_style] ?? currentStory.language_style ?? '';
+      const contextParts = [styleLabel, modeLabel].filter((s) => s.trim());
+      headerContext.textContent = contextParts.length
+        ? `Roleplay dengan ${currentStory.ai_name} (${contextParts.join(' \u00b7 ')})`
+        : `Roleplay dengan ${currentStory.ai_name}`;
 
       // Populate avatar settings from currentStory.
       if (avatarEnabledToggle && avatarUrlInput) {
