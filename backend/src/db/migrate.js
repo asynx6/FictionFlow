@@ -114,13 +114,13 @@ const MIGRATIONS = [
     description: 'Normalize NULL target_ending to \'\' (schema.sql DEFAULT only covers fresh DBs)',
     up: (db) => {
       // Stories created before the controller defaulted to '' may hold NULL,
-      // which trips the NOT NULL invariant on rewrite paths.
-      // Guard: DB yang lebih tua dari schema target_ending tidak punya kolomnya
-      // — backfill tidak relevan di DB itu (fresh install lewat schema.sql yang
-      // sudah punya DEFAULT ''). Catatan: versi tetap naik; ini backfill one-shot
-      // yang sadar diri, bukan constraint yang harus ditegakkan berulang.
+      // which trips the NOT NULL invariant on rewrite paths. DB yang lebih tua
+      // dari kolom ini malah belum punya kolomnya → tambah sesuai pola v2.
       const cols = db.prepare('PRAGMA table_info(stories)').all();
-      if (!cols.some((c) => c.name === 'target_ending')) return;
+      if (!cols.some((c) => c.name === 'target_ending')) {
+        db.exec("ALTER TABLE stories ADD COLUMN target_ending TEXT NOT NULL DEFAULT ''");
+        return;
+      }
       db.exec("UPDATE stories SET target_ending = '' WHERE target_ending IS NULL");
     },
   },
