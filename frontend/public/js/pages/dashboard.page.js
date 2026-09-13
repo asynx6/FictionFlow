@@ -353,7 +353,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                   </span>
                   <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-theme-hover text-theme-muted border border-theme-border/50">
                     <span class="material-icons-round text-[12px]">${escapeHtml(Object.hasOwn(GENDER_ICONS, aiGender) ? GENDER_ICONS[aiGender] : 'person')}</span>
-                    <span>AI ${labelFor(GENDER_LABELS, aiGender)}</span>
+                    <span>AI ${escapeHtml(labelFor(GENDER_LABELS, aiGender))}</span>
                   </span>
                   <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-theme-hover text-theme-muted border border-theme-border/50">
                     <span class="material-icons-round text-[12px]">${escapeHtml(Object.hasOwn(GENDER_ICONS, userGender) ? GENDER_ICONS[userGender] : 'person')}</span>

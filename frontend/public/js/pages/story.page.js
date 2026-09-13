@@ -3,6 +3,7 @@ import { themeManager } from '../core/themeManager.js';
 import { renderMarkdown } from '../core/markdownRenderer.js';
 import { stripReasoningContent } from '../core/textUtils.js';
 import { LANGUAGE_STYLE_LABELS, labelFor } from '../core/labels.js';
+import { escapeHtml } from '../core/textUtils.js';
 
 const FONT_SIZE_KEY = 'fictionflow_font_size';
 const READING_MODE_KEY = 'fictionflow_reading_mode';
@@ -1156,13 +1157,6 @@ document.addEventListener('DOMContentLoaded', async () => {
   const loadMemoryContent = async () => {
     const reqId = ++memoryReqId;
     memoryList.innerHTML = `<div class="flex justify-center p-4"><span class="material-icons-round animate-spin text-theme-accent">autorenew</span></div>`;
-    const escapeHtml2 = (s) => String(s ?? '')
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#039;');
-
     if (activeMemoryTab === 'long-term') {
       try {
         const res = await apiClient.get(`/stories/${storyId}`);
@@ -1216,11 +1210,11 @@ document.addEventListener('DOMContentLoaded', async () => {
             return `
               <div class="p-3 bg-theme-bg rounded-xl border border-theme-border/30 mb-2 shadow-sm">
                 <div class="flex justify-between items-start mb-1 gap-2">
-                  <span class="text-xs font-semibold text-theme-accent bg-theme-accent/10 px-2 py-0.5 rounded uppercase tracking-wider truncate">${escapeHtml2(category)}</span>
+                  <span class="text-xs font-semibold text-theme-accent bg-theme-accent/10 px-2 py-0.5 rounded uppercase tracking-wider truncate">${escapeHtml(category)}</span>
                   <span class="text-[10px] text-theme-muted whitespace-nowrap">${learned}</span>
                 </div>
-                ${key ? `<p class="text-[11px] text-theme-muted font-mono mb-1">${escapeHtml2(key)}</p>` : ''}
-                <p class="text-sm text-theme-text mt-1 leading-relaxed">${escapeHtml2(value)}</p>
+                ${key ? `<p class="text-[11px] text-theme-muted font-mono mb-1">${escapeHtml(key)}</p>` : ''}
+                <p class="text-sm text-theme-text mt-1 leading-relaxed">${escapeHtml(value)}</p>
               </div>
             `;
           }).join('');
@@ -1257,10 +1251,10 @@ document.addEventListener('DOMContentLoaded', async () => {
             return `
               <div class="p-3 bg-theme-bg rounded-xl border border-theme-border/30 mb-2 shadow-sm">
                 <div class="flex justify-between items-start mb-1 gap-2">
-                  <span class="text-xs font-semibold px-2 py-0.5 rounded uppercase tracking-wider truncate ${roleClass}">${escapeHtml2(roleName)}</span>
+                  <span class="text-xs font-semibold px-2 py-0.5 rounded uppercase tracking-wider truncate ${roleClass}">${escapeHtml(roleName)}</span>
                   <span class="text-[10px] text-theme-muted whitespace-nowrap">${dateStr}</span>
                 </div>
-                <p class="text-sm text-theme-text mt-1 leading-relaxed whitespace-pre-wrap">${escapeHtml2(cleanedContent)}</p>
+                <p class="text-sm text-theme-text mt-1 leading-relaxed whitespace-pre-wrap">${escapeHtml(cleanedContent)}</p>
               </div>
             `;
           }).join('');
