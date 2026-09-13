@@ -2,6 +2,7 @@ import { apiClient } from '../api/apiClient.js';
 import { themeManager } from '../core/themeManager.js';
 import { renderMarkdown } from '../core/markdownRenderer.js';
 import { stripReasoningContent } from '../core/textUtils.js';
+import { LANGUAGE_STYLE_LABELS, labelFor } from '../core/labels.js';
 
 const FONT_SIZE_KEY = 'fictionflow_font_size';
 const READING_MODE_KEY = 'fictionflow_reading_mode';
@@ -32,14 +33,6 @@ const FONT_SIZE_MAP = {
 
 // Display labels for stored language_style enum values (create-form option
 // values). Fall back to raw value for custom styles / legacy label rows.
-const LANGUAGE_STYLE_LABELS = {
-  santai: 'Santai & Asik',
-  ceplas_ceplos: 'Blak-blakan & To the point',
-  absurd: 'Kocak & Absurd',
-  kasar_imut: 'Kasar tapi Imut (Tsundere)',
-  profesional: 'Profesional & Sopan',
-};
-
 // TTS playback + per-segment gender switching was removed. Each story
 // picks one voice (story.tts_voice) and the AI emits plain prose; the
 // /api/tts route and the audio_segments path are also gone. audio_segments
@@ -1157,7 +1150,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   };
 
+  // Guard against a race when the user switches tabs quickly: each call gets a
+  // sequence id; late responses from older calls are discarded before rendering.
+  let memoryReqId = 0;
   const loadMemoryContent = async () => {
+    const reqId = ++memoryReqId;
     memoryList.innerHTML = `<div class="flex justify-center p-4"><span class="material-icons-round animate-spin text-theme-accent">autorenew</span></div>`;
     const escapeHtml2 = (s) => String(s ?? '')
       .replace(/&/g, '&amp;')
@@ -1169,6 +1166,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (activeMemoryTab === 'long-term') {
       try {
         const res = await apiClient.get(`/stories/${storyId}`);
+        if (reqId !== memoryReqId) return; // tab berganti — response ini basi
         const storyData = res.data?.story ?? res.data;
         const rawMem = storyData?.dynamic_memory;
         let parsed;
@@ -1236,6 +1234,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         const windowSize = currentStory?.short_term_window ?? 4;
         const limit = windowSize * 2;
         const res = await apiClient.get(`/stories/${storyId}/messages?limit=${limit}`);
+        if (reqId !== memoryReqId) return; // tab berganti — response ini basi
         const messages = res.data?.messages ?? res.data ?? [];
 
         shortMemoryCountBadge.textContent = `${messages.length} pesan`;
@@ -1586,7 +1585,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       headerAiName.textContent = currentStory.ai_name;
       renderAvatarInto(headerAvatar, currentStory);
       const modeLabel = (currentStory.roleplay_mode ?? 'default') === 'casual' ? 'Casual' : 'Default';
-      const styleLabel = LANGUAGE_STYLE_LABELS[currentStory.language_style] ?? currentStory.language_style ?? '';
+      const styleLabel = labelFor(LANGUAGE_STYLE_LABELS, currentStory.language_style) ?? '';
       const contextParts = [styleLabel, modeLabel].filter((s) => s.trim());
       headerContext.textContent = contextParts.length
         ? `Roleplay dengan ${currentStory.ai_name} (${contextParts.join(' \u00b7 ')})`

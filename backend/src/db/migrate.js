@@ -109,6 +109,15 @@ const MIGRATIONS = [
       }
     },
   },
+  {
+    version: 8,
+    description: 'Normalize NULL target_ending to \'\' (schema.sql DEFAULT only covers fresh DBs)',
+    up: (db) => {
+      // Stories created before the controller defaulted to '' may hold NULL,
+      // which trips the NOT NULL invariant on rewrite paths.
+      db.exec("UPDATE stories SET target_ending = '' WHERE target_ending IS NULL");
+    },
+  },
 ];
 
 export function runMigrations(db) {

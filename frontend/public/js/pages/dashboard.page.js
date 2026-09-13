@@ -1,22 +1,6 @@
 import { apiClient } from '../api/apiClient.js';
 import { themeManager } from '../core/themeManager.js';
-
-// Display labels for stored enum values (create-form option values).
-// Fall back to raw value for legacy rows storing the label itself.
-function labelFor(map, value) {
-  return map[value] ?? value;
-}
-
-const GENDER_LABELS = { male: 'Laki-laki', female: 'Perempuan', neutral: 'Netral' };
-const LANGUAGE_STYLE_LABELS = {
-  santai: 'Santai & Asik',
-  ceplas_ceplos: 'Blak-blakan & To the point',
-  absurd: 'Kocak & Absurd',
-  kasar_imut: 'Kasar tapi Imut (Tsundere)',
-  profesional: 'Profesional & Sopan',
-};
-
-const GENDER_ICONS = { male: 'male', female: 'female', neutral: 'person' };
+import { GENDER_LABELS, LANGUAGE_STYLE_LABELS, GENDER_ICONS, labelFor } from '../core/labels.js';
 
 document.addEventListener('error', (e) => {
   const img = e.target;

@@ -207,7 +207,8 @@ export function createStory(req, res) {
     language_style: req.body.language_style,
     // Optional field — '' instead of null so it satisfies the NOT NULL
     // column while staying absent from the prompt (promptBuilder masks it).
-    target_ending: (req.body.target_ending?.toString().trim() || ''),
+    // Only accept real strings: String(obj) would store "[object Object]".
+    target_ending: typeof req.body.target_ending === 'string' ? req.body.target_ending.trim() : '',
     // Provider model is fixed by .env — column kept in schema for back-compat
     // but backend always uses env.DEFAULT_MODEL_ID regardless.
     active_model_id: env.DEFAULT_MODEL_ID,
