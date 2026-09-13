@@ -5,6 +5,7 @@
 // enum. Tapi lookup HARUS pakai Object.hasOwn — map[value] polos bisa kena
 // inherited property (`toString`, `constructor`, `__proto__`), yang kalau
 // value-nya user-controlled nyuntik fungsi/objek ke HTML (XSS/prototype lookup).
+import { escapeHtml } from './textUtils.js';
 
 export const GENDER_LABELS = { male: 'Laki-laki', female: 'Perempuan', neutral: 'Netral' };
 
@@ -28,4 +29,17 @@ export const GENDER_ICONS = { male: 'male', female: 'female', neutral: 'person' 
 export function labelFor(map, value) {
   if (typeof value !== 'string') return '';
   return Object.hasOwn(map, value) ? map[value] : value;
+}
+
+/**
+ * Versi aman untuk selipan ke template innerHTML: lookup guarded + escaped.
+ * Pakai ini (bukan labelFor polos) di semua call-site innerHTML.
+ */
+export function labelForHtml(map, value) {
+  return escapeHtml(labelFor(map, value));
+}
+
+/** Lookup ikon aman (anti inherited property), default 'person'. */
+export function iconFor(map, value) {
+  return Object.hasOwn(map, value) ? map[value] : 'person';
 }

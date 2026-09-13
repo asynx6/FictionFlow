@@ -115,6 +115,9 @@ const MIGRATIONS = [
     up: (db) => {
       // Stories created before the controller defaulted to '' may hold NULL,
       // which trips the NOT NULL invariant on rewrite paths.
+      // Guard: DB yang lebih tua dari schema target_ending tidak punya kolomnya.
+      const cols = db.prepare('PRAGMA table_info(stories)').all();
+      if (!cols.some((c) => c.name === 'target_ending')) return;
       db.exec("UPDATE stories SET target_ending = '' WHERE target_ending IS NULL");
     },
   },

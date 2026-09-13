@@ -318,6 +318,16 @@ export function updateStory(req, res) {
   if (provided.short_term_window !== undefined) {
     provided.short_term_window = clampWindow(provided.short_term_window);
   }
+  if (provided.target_ending !== undefined) {
+    const v = provided.target_ending;
+    if (v == null || v === '') {
+      provided.target_ending = '';
+    } else if (typeof v !== 'string') {
+      throw new HttpError(400, 'target_ending harus string.');
+    } else {
+      provided.target_ending = v.trim();
+    }
+  }
   if (provided.tts_voice !== undefined) {
     if (typeof provided.tts_voice !== 'string') {
       throw new HttpError(400, 'Field "tts_voice" harus berupa string.');
