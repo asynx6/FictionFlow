@@ -1226,6 +1226,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           }).join('');
         }
       } catch (err) {
+        if (reqId !== memoryReqId) return; // error dari tab basi janganimpa tab baru
         memoryList.innerHTML = `<p class="text-sm text-red-500 text-center py-6">Gagal memuat memori.</p>`;
       }
     } else {
@@ -1266,6 +1267,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           memoryList.innerHTML = html;
         }
       } catch (err) {
+        if (reqId !== memoryReqId) return; // error dari tab basi janganimpa tab baru
         memoryList.innerHTML = `<p class="text-sm text-red-500 text-center py-6">Gagal memuat short-term memory.</p>`;
       }
     }

@@ -21,6 +21,9 @@ export const GENDER_ICONS = { male: 'male', female: 'female', neutral: 'person' 
 /**
  * Ambil label aman dari map. Nilai tak dikenal dikembalikan sebagai
  * string-nya (dipanggil dari konteks yang me-escape output), undefined → ''.
+ *
+ * KONTRAK: semua call-site WAJIB menaruh hasil di innerText / escaped
+ * template. Jangan pernah selipkan hasil labelFor ke innerHTML mentah.
  */
 export function labelFor(map, value) {
   if (typeof value !== 'string') return '';

@@ -1,6 +1,7 @@
 import { apiClient } from '../api/apiClient.js';
 import { themeManager } from '../core/themeManager.js';
 import { GENDER_LABELS, LANGUAGE_STYLE_LABELS, GENDER_ICONS, labelFor } from '../core/labels.js';
+import { escapeHtml } from '../core/textUtils.js';
 
 document.addEventListener('error', (e) => {
   const img = e.target;
@@ -348,15 +349,15 @@ document.addEventListener('DOMContentLoaded', async () => {
                 <div class="flex flex-wrap items-center gap-2">
                   <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-theme-accent/10 text-theme-accent border border-theme-accent/10">
                     <span class="material-icons-round text-[12px]">style</span>
-                    <span>${labelFor(LANGUAGE_STYLE_LABELS, languageStyle)}</span>
+                    <span>${escapeHtml(labelFor(LANGUAGE_STYLE_LABELS, languageStyle))}</span>
                   </span>
                   <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-theme-hover text-theme-muted border border-theme-border/50">
-                    <span class="material-icons-round text-[12px]">${GENDER_ICONS[aiGender] ?? 'person'}</span>
+                    <span class="material-icons-round text-[12px]">${escapeHtml(Object.hasOwn(GENDER_ICONS, aiGender) ? GENDER_ICONS[aiGender] : 'person')}</span>
                     <span>AI ${labelFor(GENDER_LABELS, aiGender)}</span>
                   </span>
                   <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-theme-hover text-theme-muted border border-theme-border/50">
-                    <span class="material-icons-round text-[12px]">${GENDER_ICONS[userGender] ?? 'person'}</span>
-                    <span>User ${labelFor(GENDER_LABELS, userGender)}</span>
+                    <span class="material-icons-round text-[12px]">${escapeHtml(Object.hasOwn(GENDER_ICONS, userGender) ? GENDER_ICONS[userGender] : 'person')}</span>
+                    <span>User ${escapeHtml(labelFor(GENDER_LABELS, userGender))}</span>
                   </span>
                 </div>
               </div>
