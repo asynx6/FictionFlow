@@ -39,7 +39,7 @@ export function labelForHtml(map, value) {
   return escapeHtml(labelFor(map, value));
 }
 
-/** Lookup ikon aman (anti inherited property), default 'person'. */
+/** Lookup ikon aman untuk innerHTML: guarded + escaped, default 'person'. */
 export function iconFor(map, value) {
-  return Object.hasOwn(map, value) ? map[value] : 'person';
+  return escapeHtml(Object.hasOwn(map, value) ? map[value] : 'person');
 }
