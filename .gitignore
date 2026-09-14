@@ -58,3 +58,6 @@ scratch/
 # --- Audit / agent scratch (not part of codebase) ---
 .superpowers/
 scratch/
+
+# tooling config (kranioi/hoplite) — jangan di-track
+.hoplite/

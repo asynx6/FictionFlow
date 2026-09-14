@@ -1,22 +1,6 @@
 import { apiClient } from '../api/apiClient.js';
 import { themeManager } from '../core/themeManager.js';
-
-// Display labels for stored enum values (create-form option values).
-// Fall back to raw value for legacy rows storing the label itself.
-function labelFor(map, value) {
-  return map[value] ?? value;
-}
-
-const GENDER_LABELS = { male: 'Laki-laki', female: 'Perempuan', neutral: 'Netral' };
-const LANGUAGE_STYLE_LABELS = {
-  santai: 'Santai & Asik',
-  ceplas_ceplos: 'Blak-blakan & To the point',
-  absurd: 'Kocak & Absurd',
-  kasar_imut: 'Kasar tapi Imut (Tsundere)',
-  profesional: 'Profesional & Sopan',
-};
-
-const GENDER_ICONS = { male: 'male', female: 'female', neutral: 'person' };
+import { GENDER_LABELS, LANGUAGE_STYLE_LABELS, GENDER_ICONS, labelForHtml, iconFor } from '../core/labels.js';
 
 document.addEventListener('error', (e) => {
   const img = e.target;
@@ -364,15 +348,15 @@ document.addEventListener('DOMContentLoaded', async () => {
                 <div class="flex flex-wrap items-center gap-2">
                   <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-theme-accent/10 text-theme-accent border border-theme-accent/10">
                     <span class="material-icons-round text-[12px]">style</span>
-                    <span>${labelFor(LANGUAGE_STYLE_LABELS, languageStyle)}</span>
+                    <span>${labelForHtml(LANGUAGE_STYLE_LABELS, languageStyle)}</span>
                   </span>
                   <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-theme-hover text-theme-muted border border-theme-border/50">
-                    <span class="material-icons-round text-[12px]">${GENDER_ICONS[aiGender] ?? 'person'}</span>
-                    <span>AI ${labelFor(GENDER_LABELS, aiGender)}</span>
+                    <span class="material-icons-round text-[12px]">${iconFor(GENDER_ICONS, aiGender)}</span>
+                    <span>AI ${labelForHtml(GENDER_LABELS, aiGender)}</span>
                   </span>
                   <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-theme-hover text-theme-muted border border-theme-border/50">
-                    <span class="material-icons-round text-[12px]">${GENDER_ICONS[userGender] ?? 'person'}</span>
-                    <span>User ${labelFor(GENDER_LABELS, userGender)}</span>
+                    <span class="material-icons-round text-[12px]">${iconFor(GENDER_ICONS, userGender)}</span>
+                    <span>User ${labelForHtml(GENDER_LABELS, userGender)}</span>
                   </span>
                 </div>
               </div>

@@ -195,6 +195,17 @@ export function createStory(req, res) {
   const ttsVoice = (req.body.tts_voice ?? DEFAULT_TTS_VOICE).toString().trim();
   validateTtsVoiceOrThrow(ttsVoice);
 
+  // target_ending: opsional; hanya string yang diterima. Tipe lain = client
+  // bug → tolak eksplisit (bukan silent-drop yang bikin data hilang diam-diam).
+  const rawTargetEnding = req.body.target_ending;
+  let targetEnding = '';
+  if (rawTargetEnding != null && rawTargetEnding !== '') {
+    if (typeof rawTargetEnding !== 'string') {
+      throw new HttpError(400, 'target_ending harus string.');
+    }
+    targetEnding = rawTargetEnding.trim();
+  }
+
   const row = {
     id,
     title,
@@ -207,7 +218,8 @@ export function createStory(req, res) {
     language_style: req.body.language_style,
     // Optional field — '' instead of null so it satisfies the NOT NULL
     // column while staying absent from the prompt (promptBuilder masks it).
-    target_ending: (req.body.target_ending?.toString().trim() || ''),
+    // Validasi tipe sudah di atas (targetEnding).
+    target_ending: targetEnding,
     // Provider model is fixed by .env — column kept in schema for back-compat
     // but backend always uses env.DEFAULT_MODEL_ID regardless.
     active_model_id: env.DEFAULT_MODEL_ID,
@@ -305,6 +317,16 @@ export function updateStory(req, res) {
   }
   if (provided.short_term_window !== undefined) {
     provided.short_term_window = clampWindow(provided.short_term_window);
+  }
+  if (provided.target_ending !== undefined) {
+    const v = provided.target_ending;
+    if (v == null || v === '') {
+      provided.target_ending = '';
+    } else if (typeof v !== 'string') {
+      throw new HttpError(400, 'target_ending harus string.');
+    } else {
+      provided.target_ending = v.trim();
+    }
   }
   if (provided.tts_voice !== undefined) {
     if (typeof provided.tts_voice !== 'string') {

@@ -2,6 +2,8 @@ import { apiClient } from '../api/apiClient.js';
 import { themeManager } from '../core/themeManager.js';
 import { renderMarkdown } from '../core/markdownRenderer.js';
 import { stripReasoningContent } from '../core/textUtils.js';
+import { LANGUAGE_STYLE_LABELS, labelFor } from '../core/labels.js';
+import { escapeHtml } from '../core/textUtils.js';
 
 const FONT_SIZE_KEY = 'fictionflow_font_size';
 const READING_MODE_KEY = 'fictionflow_reading_mode';
@@ -32,14 +34,6 @@ const FONT_SIZE_MAP = {
 
 // Display labels for stored language_style enum values (create-form option
 // values). Fall back to raw value for custom styles / legacy label rows.
-const LANGUAGE_STYLE_LABELS = {
-  santai: 'Santai & Asik',
-  ceplas_ceplos: 'Blak-blakan & To the point',
-  absurd: 'Kocak & Absurd',
-  kasar_imut: 'Kasar tapi Imut (Tsundere)',
-  profesional: 'Profesional & Sopan',
-};
-
 // TTS playback + per-segment gender switching was removed. Each story
 // picks one voice (story.tts_voice) and the AI emits plain prose; the
 // /api/tts route and the audio_segments path are also gone. audio_segments
@@ -1157,18 +1151,16 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   };
 
+  // Guard against a race when the user switches tabs quickly: each call gets a
+  // sequence id; late responses from older calls are discarded before rendering.
+  let memoryReqId = 0;
   const loadMemoryContent = async () => {
+    const reqId = ++memoryReqId;
     memoryList.innerHTML = `<div class="flex justify-center p-4"><span class="material-icons-round animate-spin text-theme-accent">autorenew</span></div>`;
-    const escapeHtml2 = (s) => String(s ?? '')
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#039;');
-
     if (activeMemoryTab === 'long-term') {
       try {
         const res = await apiClient.get(`/stories/${storyId}`);
+        if (reqId !== memoryReqId) return; // tab berganti — response ini basi
         const storyData = res.data?.story ?? res.data;
         const rawMem = storyData?.dynamic_memory;
         let parsed;
@@ -1218,16 +1210,17 @@ document.addEventListener('DOMContentLoaded', async () => {
             return `
               <div class="p-3 bg-theme-bg rounded-xl border border-theme-border/30 mb-2 shadow-sm">
                 <div class="flex justify-between items-start mb-1 gap-2">
-                  <span class="text-xs font-semibold text-theme-accent bg-theme-accent/10 px-2 py-0.5 rounded uppercase tracking-wider truncate">${escapeHtml2(category)}</span>
+                  <span class="text-xs font-semibold text-theme-accent bg-theme-accent/10 px-2 py-0.5 rounded uppercase tracking-wider truncate">${escapeHtml(category)}</span>
                   <span class="text-[10px] text-theme-muted whitespace-nowrap">${learned}</span>
                 </div>
-                ${key ? `<p class="text-[11px] text-theme-muted font-mono mb-1">${escapeHtml2(key)}</p>` : ''}
-                <p class="text-sm text-theme-text mt-1 leading-relaxed">${escapeHtml2(value)}</p>
+                ${key ? `<p class="text-[11px] text-theme-muted font-mono mb-1">${escapeHtml(key)}</p>` : ''}
+                <p class="text-sm text-theme-text mt-1 leading-relaxed">${escapeHtml(value)}</p>
               </div>
             `;
           }).join('');
         }
       } catch (err) {
+        if (reqId !== memoryReqId) return; // error dari tab basi janganimpa tab baru
         memoryList.innerHTML = `<p class="text-sm text-red-500 text-center py-6">Gagal memuat memori.</p>`;
       }
     } else {
@@ -1236,6 +1229,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         const windowSize = currentStory?.short_term_window ?? 4;
         const limit = windowSize * 2;
         const res = await apiClient.get(`/stories/${storyId}/messages?limit=${limit}`);
+        if (reqId !== memoryReqId) return; // tab berganti — response ini basi
         const messages = res.data?.messages ?? res.data ?? [];
 
         shortMemoryCountBadge.textContent = `${messages.length} pesan`;
@@ -1257,16 +1251,17 @@ document.addEventListener('DOMContentLoaded', async () => {
             return `
               <div class="p-3 bg-theme-bg rounded-xl border border-theme-border/30 mb-2 shadow-sm">
                 <div class="flex justify-between items-start mb-1 gap-2">
-                  <span class="text-xs font-semibold px-2 py-0.5 rounded uppercase tracking-wider truncate ${roleClass}">${escapeHtml2(roleName)}</span>
+                  <span class="text-xs font-semibold px-2 py-0.5 rounded uppercase tracking-wider truncate ${roleClass}">${escapeHtml(roleName)}</span>
                   <span class="text-[10px] text-theme-muted whitespace-nowrap">${dateStr}</span>
                 </div>
-                <p class="text-sm text-theme-text mt-1 leading-relaxed whitespace-pre-wrap">${escapeHtml2(cleanedContent)}</p>
+                <p class="text-sm text-theme-text mt-1 leading-relaxed whitespace-pre-wrap">${escapeHtml(cleanedContent)}</p>
               </div>
             `;
           }).join('');
           memoryList.innerHTML = html;
         }
       } catch (err) {
+        if (reqId !== memoryReqId) return; // error dari tab basi janganimpa tab baru
         memoryList.innerHTML = `<p class="text-sm text-red-500 text-center py-6">Gagal memuat short-term memory.</p>`;
       }
     }
@@ -1586,7 +1581,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       headerAiName.textContent = currentStory.ai_name;
       renderAvatarInto(headerAvatar, currentStory);
       const modeLabel = (currentStory.roleplay_mode ?? 'default') === 'casual' ? 'Casual' : 'Default';
-      const styleLabel = LANGUAGE_STYLE_LABELS[currentStory.language_style] ?? currentStory.language_style ?? '';
+      const styleLabel = labelFor(LANGUAGE_STYLE_LABELS, currentStory.language_style) ?? '';
       const contextParts = [styleLabel, modeLabel].filter((s) => s.trim());
       headerContext.textContent = contextParts.length
         ? `Roleplay dengan ${currentStory.ai_name} (${contextParts.join(' \u00b7 ')})`

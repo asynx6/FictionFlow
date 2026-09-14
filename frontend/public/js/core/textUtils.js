@@ -20,3 +20,17 @@ export function stripReasoningContent(text) {
   }
   return cleaned;
 }
+
+
+/**
+ * Escape string untuk disisipkan ke HTML template. SATU-SATUNYA helper escape
+ * yang dipakai call-site innerHTML — jangan tulis re-implementasi per-file.
+ */
+export function escapeHtml(s) {
+  return String(s ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
